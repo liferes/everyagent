@@ -9,7 +9,12 @@ export default defineConfig({
   splitting: false,
   sourcemap: false,
   dts: false,
+  // Everything in one file, so the built CLI runs without node_modules.
+  noExternal: [/.*/],
   banner: {
-    js: '#!/usr/bin/env node',
+    // Bundled CJS deps still call require(), which ESM has no binding for.
+    js: `#!/usr/bin/env node
+import { createRequire as __uniskillCreateRequire } from "node:module";
+const require = __uniskillCreateRequire(import.meta.url);`,
   },
 });
