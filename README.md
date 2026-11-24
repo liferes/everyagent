@@ -6,18 +6,30 @@ Every repo gets parsed into one intermediate shape, then rewritten for whichever
 
 ---
 
-## Quickstart
+## Install
 
-Launch the interactive wizard with no arguments:
+Not on npm yet, so install it straight from this repo:
 
 ```bash
-npx uniskill
+npm i -g --allow-git=all github:liferes/uniskill
 ```
 
-Or skip the questions:
+npm 12 refuses git installs unless you opt in, which is what `--allow-git=all` does. After that `uniskill` runs from any directory.
+
+Don't want it global:
 
 ```bash
-npx uniskill owner/repo -t claude
+npx --yes --allow-git=all github:liferes/uniskill owner/repo -t claude
+```
+
+---
+
+## Quickstart
+
+No arguments launches the interactive wizard:
+
+```bash
+uniskill
 ```
 
 ---
@@ -26,28 +38,28 @@ npx uniskill owner/repo -t claude
 
 ```bash
 # Auto-detect source format and install into .claude/ in the current directory
-npx uniskill owner/repo -t claude
+uniskill owner/repo -t claude
 
 # Full GitHub URL, custom destination directory, skip confirmation
-npx uniskill https://github.com/owner/repo -t opencode ./my-app -y
+uniskill https://github.com/owner/repo -t opencode ./my-app -y
 
 # Monorepo subpath (only that folder's files get installed)
-npx uniskill owner/repo/tree/main/skills/ui -t codex
+uniskill owner/repo/tree/main/skills/ui -t codex
 
 # Multi-target conversion in one pass
-npx uniskill owner/repo -t claude,opencode,codex
+uniskill owner/repo -t claude,opencode,codex
 
 # Convert to all supported formats
-npx uniskill owner/repo -t all -y
+uniskill owner/repo -t all -y
 
 # Install into your global agent configuration directory
-npx uniskill owner/repo -t opencode -g
+uniskill owner/repo -t opencode -g
 
 # Preview planned file creates/skips without touching disk
-npx uniskill owner/repo -t claude --dry-run
+uniskill owner/repo -t claude --dry-run
 
 # Overwrite existing files explicitly
-npx uniskill owner/repo -t cursor --force
+uniskill owner/repo -t cursor --force
 ```
 
 ---
