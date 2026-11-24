@@ -2,6 +2,15 @@
   "name": "uniskill",
   "version": "0.1.0",
   "description": "Convert and install AI-agent skills between Cursor, Claude Code, OpenCode, and Codex CLI",
+  "author": "liferes",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/liferes/uniskill.git"
+  },
+  "homepage": "https://github.com/liferes/uniskill#readme",
+  "bugs": {
+    "url": "https://github.com/liferes/uniskill/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=18.0.0"

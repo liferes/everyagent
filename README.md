@@ -1,132 +1,121 @@
 # uniskill
 
-**Convert and install skill repos between Cursor, Claude Code, OpenCode, and Codex CLI.**
+Point it at a skill repo, name the agent you use, and it lays the files out the way that agent expects. Cursor rules in, Claude skills out. Or OpenCode, or Codex. Any direction you need.
 
-Every repo gets parsed into one intermediate shape, then rewritten for whichever format you asked for: paths inside the markdown get repointed, frontmatter gets translated, `scripts/` and `references/` come along. Existing files are left alone unless you pass `--force`.
+Every source gets parsed into one intermediate shape and rebuilt for the target, which is how it avoids a converter for every format pair. Paths inside the markdown get rewritten on the way through: a `.cursor/scripts/` reference becomes `.claude/scripts/` when Claude is the destination, and the `.cursorrules` root file comes out as `CLAUDE.md`. Whatever sits next to a skill travels with it.
 
----
+Nothing on your disk gets overwritten unless you pass `--force`.
 
 ## Install
 
-Not on npm yet, so install it straight from this repo:
+Not on npm yet. Install from GitHub:
 
 ```bash
 npm i -g --allow-git=all github:liferes/uniskill
 ```
 
-npm 12 refuses git installs unless you opt in, which is what `--allow-git=all` does. After that `uniskill` runs from any directory.
+npm 12 blocks git installs by default, so that flag isn't optional. The build runs during install.
 
-Don't want it global:
+Prefer it uninstalled:
 
 ```bash
 npx --yes --allow-git=all github:liferes/uniskill owner/repo -t claude
 ```
 
----
+## Usage
 
-## Quickstart
-
-No arguments launches the interactive wizard:
+Bare, with no arguments, it asks you questions:
 
 ```bash
 uniskill
 ```
 
----
-
-## Copy-Paste One-Liners
+Give it everything up front and it skips the questions. First argument is the source, either `owner/repo` or a full URL:
 
 ```bash
-# Auto-detect source format and install into .claude/ in the current directory
+uniskill owner/repo -t claude
+```
+
+More of the same:
+
+```bash
+# detect the source format, write into .claude/ here
 uniskill owner/repo -t claude
 
-# Full GitHub URL, custom destination directory, skip confirmation
+# full URL, custom directory, no confirmation prompt
 uniskill https://github.com/owner/repo -t opencode ./my-app -y
 
-# Monorepo subpath (only that folder's files get installed)
+# pull one folder out of a monorepo
 uniskill owner/repo/tree/main/skills/ui -t codex
 
-# Multi-target conversion in one pass
-uniskill owner/repo -t claude,opencode,codex
+# two targets in one pass
+uniskill owner/repo -t claude,opencode
 
-# Convert to all supported formats
+# everything at once
 uniskill owner/repo -t all -y
 
-# Install into your global agent configuration directory
+# straight into your user-level agent config
 uniskill owner/repo -t opencode -g
 
-# Preview planned file creates/skips without touching disk
+# see what would happen, touch nothing
 uniskill owner/repo -t claude --dry-run
 
-# Overwrite existing files explicitly
+# overwrite what's already there
 uniskill owner/repo -t cursor --force
 ```
 
----
+## Formats
 
-## Supported Formats & Mappings
-
-| Format | Skill / Rule Path | Root Rules | Frontmatter Fields | Global Path (`-g`) |
+| Format | Skills live in | Root rule | Frontmatter | `-g` target |
 | :--- | :--- | :--- | :--- | :--- |
-| **Cursor** | `.cursor/rules/<name>.mdc` | `.cursorrules` | `description`, `globs`, `alwaysApply` | `~/.cursor/` |
-| **Claude Code** | `.claude/skills/<name>/SKILL.md` | `CLAUDE.md` | `name`, `description`, `allowed-tools` | `~/.claude/` |
-| **OpenCode** | `.opencode/skills/<name>/SKILL.md` | `AGENTS.md` | `name`, `description` | `~/.config/opencode/` |
-| **Codex CLI** | `.codex/skills/<name>/SKILL.md` | `AGENTS.md` | `name`, `description` | `~/.codex/` |
+| Cursor | `.cursor/rules/<name>.mdc` | `.cursorrules` | `description`, `globs`, `alwaysApply` | `~/.cursor/` |
+| Claude Code | `.claude/skills/<name>/SKILL.md` | `CLAUDE.md` | `name`, `description`, `allowed-tools` | `~/.claude/` |
+| OpenCode | `.opencode/skills/<name>/SKILL.md` | `AGENTS.md` | `name`, `description` | `~/.config/opencode/` |
+| Codex CLI | `.codex/skills/<name>/SKILL.md` | `AGENTS.md` | `name`, `description` | `~/.codex/` |
 
-### Translation rules
+### Cursor is the odd one
 
-* **Cursor `.mdc` ➔ `SKILL.md`:** `description` and `globs` get pulled out, the glob patterns get folded into the description as `(Applies to: ...)`, and the body comes across unchanged.
-* **`SKILL.md` ➔ Cursor `.mdc`:** `description` goes into the `.mdc` frontmatter with `alwaysApply: false`.
-* **Internal paths:** folder references inside bodies, root rules, and text assets get repointed (`.cursor/scripts/` ➔ `.claude/scripts/`, `.cursorrules` ➔ `CLAUDE.md`).
-* **Companion assets:** `scripts/`, `references/`, and anything else sitting next to a skill travel with it.
-
----
+Cursor keeps rules as single `.mdc` files instead of a folder with a `SKILL.md` inside, so converting in that direction loses a bit of shape. Glob patterns have nowhere to live in `SKILL.md` frontmatter, so they get folded into the description as `(Applies to: ...)`. Going back the other way, `description` lands in the `.mdc` frontmatter and `alwaysApply` comes out as `false`.
 
 ## Flags
 
-| Flag | Description | Default |
+| Flag | What it does | Default |
 | :--- | :--- | :--- |
-| `-t, --to <targets>` | Target format(s): `claude`, `opencode`, `codex`, `cursor`, `all` (comma-separated) | Prompt in TTY |
-| `-p, --path <dir>` | Destination project directory (or pass `<dir>` as 2nd positional arg) | `.` |
-| `-f, --from <format>` | Override source auto-detection (`auto`, `cursor`, `claude`, `opencode`, `codex`) | `auto` |
-| `-g, --global` | Install to the user's global agent config directory | `false` |
-| `-y, --yes` | Skip confirmation prompt | `false` |
-| `-d, --dry-run` | Print planned creates and skips without modifying disk | `false` |
-| `--force` | Overwrite existing files (overrides default skip behavior) | `false` |
-| `-h, --help` | Display CLI help | — |
-| `-v, --version` | Display CLI version | — |
+| `-t, --to <targets>` | Target format(s): `claude`, `opencode`, `codex`, `cursor`, `all`. Comma-separated. | Prompted in a TTY |
+| `-p, --path <dir>` | Destination project directory, or pass it as the second positional arg | `.` |
+| `-f, --from <format>` | Override source detection: `auto`, `cursor`, `claude`, `opencode`, `codex` | `auto` |
+| `-g, --global` | Install into your user-level agent config directory | `false` |
+| `-y, --yes` | Skip the confirmation prompt | `false` |
+| `-d, --dry-run` | Print the plan without touching disk | `false` |
+| `--force` | Overwrite existing files | `false` |
+| `-h, --help` | Print help | |
+| `-v, --version` | Print version | |
 
----
+## Skipping, and the one collision
 
-## Zero-Destruction Default
-
-By default, `uniskill` **never overwrites existing files**. If a destination file already exists, it logs:
+Existing files get skipped, not replaced:
 
 ```text
 ⚠ Skipped .claude/skills/react-hooks/SKILL.md (already exists)
 ```
 
-Use `--dry-run` to preview every file operation before writing, or `--force` to explicitly overwrite existing files.
+`--dry-run` shows you the whole plan first, and `--force` overrides the skip.
 
-### Multiple targets
-
-OpenCode and Codex both use `AGENTS.md` as their root rule, and each rewrites internal paths for its own config directory. When you convert to both in one run, the file name collides and `uniskill` keeps the first version:
+One case is worth knowing about. OpenCode and Codex both call their root rule `AGENTS.md`, but each rewrites internal paths for its own config directory, so the two copies differ. Convert to both in a single run and the second one loses:
 
 ```text
 ✔ Created AGENTS.md
 ⚠ Conflict AGENTS.md (second target wanted different content; first kept)
 ```
 
-A conflict is not a user file being protected, so it is counted separately from skips and printed with a warning. If you need both, install them one at a time:
+That counts as a conflict rather than a skip, since no file of yours was involved. Install them separately if you need both:
 
 ```bash
-npx uniskill owner/repo -t opencode
-npx uniskill owner/repo -t codex --force
+uniskill owner/repo -t opencode
+uniskill owner/repo -t codex --force
 ```
 
----
-
-## Local Development
+## Development
 
 ```bash
 npm install
@@ -135,13 +124,15 @@ npm run build
 npm test
 ```
 
-Test globally via `npm link`:
+To try the binary before installing it for real:
 
 ```bash
 npm link
 uniskill --help
 ```
 
+The 32 tests cover the 4x4 conversion matrix, the tar extractor, the writer's skip and conflict paths, and skill-name sanitising.
+
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
