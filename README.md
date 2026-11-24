@@ -14,7 +14,7 @@ Not on npm yet. Install from GitHub:
 npm i -g --allow-git=all github:liferes/uniskill
 ```
 
-npm 12 blocks git installs by default, so that flag isn't optional. The build runs during install.
+npm 12 blocks git installs by default, so that flag isn't optional. It ships prebuilt, so there's nothing to compile.
 
 Prefer it uninstalled:
 

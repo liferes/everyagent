@@ -1,0 +1,8 @@
+---
+description: REST API design and error envelope standards
+alwaysApply: true
+---
+
+# API Design
+
+Follow the REST checklist in `.cursor/rules/api-design/references/rest.md`.

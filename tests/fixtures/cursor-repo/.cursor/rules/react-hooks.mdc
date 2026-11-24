@@ -1,0 +1,13 @@
+---
+description: Enforce React hooks best practices and dependency hygiene
+globs:
+  - "src/hooks/*.ts"
+  - "*.tsx"
+alwaysApply: false
+---
+
+# React Hooks Guidelines
+
+1. Keep hook dependencies exhaustive and memoize expensive callbacks.
+2. Validate hook usage with `.cursor/scripts/check-hooks.sh`.
+3. Cross-check global standards in `.cursorrules`.

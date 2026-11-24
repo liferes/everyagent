@@ -1,0 +1,4 @@
+# Cursor Project Rules
+
+Always run `.cursor/scripts/check-hooks.sh` before committing React hook changes.
+Follow `.cursorrules` conventions across the repository.
