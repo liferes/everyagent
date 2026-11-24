@@ -1,0 +1,419 @@
+import matter from 'gray-matter';
+import {
+  FORMAT_META,
+  isTextFile,
+  normalizePosixPath,
+  type Asset,
+  type EmittedFile,
+  type FormatId,
+  type RootRule,
+  type Skill,
+  type SourceFile,
+  type UniskillPackage,
+} from '../core/ir.js';
+import { formatSkillDescriptionForSkillMd } from '../core/rewriter.js';
+
+export interface DetectionResult {
+  format: FormatId;
+  label: string;
+  skillCount: number;
+  hasRootRule: boolean;
+  summary: string;
+  matchedPaths: string[];
+  allowLoose?: boolean;
+}
+
+export interface EmitOptions {
+  global?: boolean;
+}
+
+export interface ParseOptions {
+  subpathName?: string;
+  allowLoose?: boolean;
+}
+
+export interface Adapter {
+  readonly id: FormatId;
+  readonly label: string;
+  readonly configDir: string;
+  readonly rootRuleFile: string;
+  getGlobalDir(): string;
+  detect(files: SourceFile[], options?: ParseOptions): DetectionResult | null;
+  parse(files: SourceFile[], options?: ParseOptions): UniskillPackage;
+  emit(pkg: UniskillPackage, options?: EmitOptions): EmittedFile[];
+}
+
+export interface ParsedMarkdown {
+  data: Record<string, unknown>;
+  body: string;
+}
+
+/** Frontmatter and body, with the leading blank line dropped. */
+export function parseMarkdownWithFrontmatter(raw: string): ParsedMarkdown {
+  const parsed = matter(raw);
+  return {
+    data: { ...(parsed.data as Record<string, unknown>) },
+    body: parsed.content.replace(/^\r?\n/, ''),
+  };
+}
+
+/** Body plus frontmatter; undefined keys are skipped. */
+export function serializeMarkdownWithFrontmatter(
+  body: string,
+  frontmatter: Record<string, unknown>,
+): Buffer {
+  const cleanData: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(frontmatter)) {
+    if (value !== undefined) {
+      cleanData[key] = value;
+    }
+  }
+
+  const normalizedBody = body.replace(/\r\n/g, '\n').replace(/^\n+/, '');
+  const withTrailingNewline =
+    normalizedBody.length === 0
+      ? ''
+      : normalizedBody.endsWith('\n')
+        ? normalizedBody
+        : `${normalizedBody}\n`;
+
+  if (Object.keys(cleanData).length === 0) {
+    return Buffer.from(withTrailingNewline, 'utf8');
+  }
+
+  const output = matter.stringify(withTrailingNewline, cleanData);
+  const ensured = output.endsWith('\n') ? output : `${output}\n`;
+  return Buffer.from(ensured, 'utf8');
+}
+
+/** Cursor writes globs as a list, a comma string, or one plain string. */
+export function normalizeGlobs(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) {
+    const items = value
+      .map((item) => String(item).trim())
+      .filter(Boolean);
+    return items.length > 0 ? items : undefined;
+  }
+  if (typeof value === 'string') {
+    const items = value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return items.length > 0 ? items : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Untrusted skill name (frontmatter or path) to a safe path segment. `.` and
+ * `..` are dropped, not rewritten, so `../../pwned` collapses to `pwned`.
+ */
+function sanitizeSkillName(raw: string): string {
+  const segments = normalizePosixPath(raw)
+    .split('/')
+    .map((segment) => segment.replace(/[^a-zA-Z0-9._-]/g, '-'))
+    .filter((segment) => segment && segment !== '.' && segment !== '..');
+  return segments.join('/') || 'skill';
+}
+
+export function detectSkillMdFormat(
+  format: FormatId,
+  files: SourceFile[],
+  options?: ParseOptions,
+): DetectionResult | null {
+  const meta = FORMAT_META[format];
+  const prefix = `${meta.configDir}/skills/`;
+  const configPrefix = `${meta.configDir}/`;
+
+  const skillPaths: string[] = [];
+  const otherConfigPaths: string[] = [];
+  let hasRootRule = false;
+
+  for (const file of files) {
+    const p = normalizePosixPath(file.path);
+    if (p.startsWith(prefix) && p.endsWith('/SKILL.md')) {
+      skillPaths.push(p);
+    } else if (p.startsWith(configPrefix)) {
+      otherConfigPaths.push(p);
+    } else if (p === meta.rootRuleFile) {
+      hasRootRule = true;
+    }
+  }
+
+  let allowLoose = false;
+  if (
+    options?.allowLoose &&
+    skillPaths.length === 0 &&
+    otherConfigPaths.length === 0
+  ) {
+    for (const file of files) {
+      const p = normalizePosixPath(file.path);
+      if (p === 'SKILL.md' || /^[^/]+\/SKILL\.md$/.test(p)) {
+        skillPaths.push(p);
+        allowLoose = true;
+      }
+    }
+  }
+
+  if (skillPaths.length === 0 && otherConfigPaths.length === 0 && !hasRootRule) {
+    return null;
+  }
+
+  const matchedPaths = [...skillPaths, ...otherConfigPaths];
+  if (hasRootRule) {
+    matchedPaths.push(meta.rootRuleFile);
+  }
+
+  const parts: string[] = [];
+  if (skillPaths.length > 0) {
+    parts.push(`${skillPaths.length} skill${skillPaths.length === 1 ? '' : 's'} found`);
+  }
+  if (hasRootRule) {
+    parts.push(meta.rootRuleFile);
+  }
+  if (parts.length === 0) {
+    parts.push(`${otherConfigPaths.length} config asset${otherConfigPaths.length === 1 ? '' : 's'}`);
+  }
+
+  return {
+    format,
+    label: meta.label,
+    skillCount: skillPaths.length,
+    hasRootRule,
+    summary: `${meta.label} — ${parts.join(', ')}`,
+    matchedPaths,
+    allowLoose,
+  };
+}
+
+export function parseSkillMdFormat(
+  format: FormatId,
+  files: SourceFile[],
+  options?: ParseOptions,
+): UniskillPackage {
+  const meta = FORMAT_META[format];
+  const skillsPrefix = `${meta.configDir}/skills/`;
+  const configPrefix = `${meta.configDir}/`;
+
+  const skillsMap = new Map<string, Skill>();
+  const looseAssetsBySkill = new Map<string, Asset[]>();
+  const rootRules: RootRule[] = [];
+  const sharedAssets: Asset[] = [];
+
+  // Entry points first: every <name>/SKILL.md is one skill.
+  const skillRoots: Array<{ skillName: string; rootDir: string; file: SourceFile }> = [];
+
+  for (const file of files) {
+    const p = normalizePosixPath(file.path);
+    if (p.startsWith(skillsPrefix) && p.endsWith('/SKILL.md')) {
+      const rest = p.slice(skillsPrefix.length);
+      const skillDir = rest.slice(0, -'/SKILL.md'.length);
+      if (!skillDir) continue;
+      skillRoots.push({
+        skillName: skillDir,
+        rootDir: `${skillsPrefix}${skillDir}/`,
+        file,
+      });
+    }
+  }
+
+  // Fallback for subpath fetches: the `.claude/skills/` prefix is gone, so a
+  // bare SKILL.md is a skill and its folder name is the skill name.
+  if (options?.allowLoose && skillRoots.length === 0) {
+    for (const file of files) {
+      const p = normalizePosixPath(file.path);
+      if (p === 'SKILL.md') {
+        const parsed = parseMarkdownWithFrontmatter(file.content.toString('utf8'));
+        const inferred =
+          (typeof parsed.data.name === 'string' && parsed.data.name.trim()) ||
+          options.subpathName ||
+          'skill';
+        skillRoots.push({
+          skillName: sanitizeSkillName(inferred),
+          rootDir: '',
+          file,
+        });
+      } else if (/^[^/]+\/SKILL\.md$/.test(p)) {
+        const skillDir = p.slice(0, -'/SKILL.md'.length);
+        skillRoots.push({
+          skillName: sanitizeSkillName(skillDir),
+          rootDir: `${skillDir}/`,
+          file,
+        });
+      }
+    }
+  }
+
+  for (const entry of skillRoots) {
+    const raw = entry.file.content.toString('utf8');
+    const { data, body } = parseMarkdownWithFrontmatter(raw);
+    const {
+      name,
+      description,
+      'allowed-tools': allowedToolsRaw,
+      globs,
+      alwaysApply,
+      ...rest
+    } = data;
+
+    const skillName =
+      typeof name === 'string' && name.trim()
+        ? sanitizeSkillName(name.trim())
+        : sanitizeSkillName(entry.skillName);
+
+    let allowedTools: string | string[] | undefined;
+    if (typeof allowedToolsRaw === 'string' && allowedToolsRaw.trim()) {
+      allowedTools = allowedToolsRaw.trim();
+    } else if (Array.isArray(allowedToolsRaw)) {
+      allowedTools = allowedToolsRaw.map((t) => String(t).trim()).filter(Boolean);
+    }
+
+    skillsMap.set(entry.rootDir || '__ROOT__', {
+      name: skillName,
+      description: typeof description === 'string' ? description.trim() : '',
+      body,
+      globs: normalizeGlobs(globs),
+      alwaysApply: typeof alwaysApply === 'boolean' ? alwaysApply : undefined,
+      allowedTools,
+      assets: [],
+      extraFrontmatter: Object.keys(rest).length > 0 ? rest : undefined,
+    });
+  }
+
+  // Then everything else: companion files, shared config, root rule.
+  for (const file of files) {
+    const p = normalizePosixPath(file.path);
+
+    if (p === meta.rootRuleFile) {
+      rootRules.push({
+        sourceFilename: meta.rootRuleFile,
+        content: file.content.toString('utf8'),
+      });
+      continue;
+    }
+
+    // Already consumed as a skill entry point.
+    const matchedRoot = skillRoots.find((sr) => normalizePosixPath(sr.file.path) === p);
+    if (matchedRoot) {
+      continue;
+    }
+
+    // Everything under a skill's own folder belongs to that skill.
+    let attachedToSkill = false;
+    for (const sr of skillRoots) {
+      if (sr.rootDir && p.startsWith(sr.rootDir)) {
+        const rel = p.slice(sr.rootDir.length);
+        const skill = skillsMap.get(sr.rootDir);
+        if (skill && rel) {
+          skill.assets.push({
+            relativePath: rel,
+            content: file.content,
+            isText: isTextFile(p, file.content),
+          });
+          attachedToSkill = true;
+          break;
+        }
+      } else if (!sr.rootDir && !p.startsWith(configPrefix)) {
+        // Loose root SKILL.md: the whole subpath is the skill, so its
+        // companion files are assets.
+        const skill = skillsMap.get('__ROOT__');
+        if (skill) {
+          skill.assets.push({
+            relativePath: p,
+            content: file.content,
+            isText: isTextFile(p, file.content),
+          });
+          attachedToSkill = true;
+          break;
+        }
+      }
+    }
+    if (attachedToSkill) {
+      continue;
+    }
+
+    if (p.startsWith(configPrefix)) {
+      const rel = p.slice(configPrefix.length);
+      if (rel) {
+        sharedAssets.push({
+          relativePath: rel,
+          content: file.content,
+          isText: isTextFile(p, file.content),
+        });
+      }
+    }
+  }
+
+  for (const [key, assets] of looseAssetsBySkill.entries()) {
+    const skill = skillsMap.get(key);
+    if (skill) {
+      skill.assets.push(...assets);
+    }
+  }
+
+  return {
+    sourceFormat: format,
+    sourceLabel: meta.label,
+    skills: Array.from(skillsMap.values()),
+    rootRules,
+    sharedAssets,
+  };
+}
+
+export function emitSkillMdFormat(
+  format: FormatId,
+  pkg: UniskillPackage,
+  options?: EmitOptions,
+  includeAllowedTools = false,
+): EmittedFile[] {
+  const meta = FORMAT_META[format];
+  const isGlobal = Boolean(options?.global);
+  const basePrefix = isGlobal ? '' : `${meta.configDir}/`;
+  const emitted: EmittedFile[] = [];
+
+  for (const skill of pkg.skills) {
+    const frontmatter: Record<string, unknown> = {
+      name: skill.name,
+      description: formatSkillDescriptionForSkillMd(skill),
+    };
+
+    if (includeAllowedTools && skill.allowedTools !== undefined) {
+      frontmatter['allowed-tools'] = skill.allowedTools;
+    }
+
+    const skillDir = `${basePrefix}skills/${skill.name}`;
+    emitted.push({
+      relativePath: `${skillDir}/SKILL.md`,
+      content: serializeMarkdownWithFrontmatter(skill.body, frontmatter),
+      targetFormat: format,
+    });
+
+    for (const asset of skill.assets) {
+      emitted.push({
+        relativePath: `${skillDir}/${normalizePosixPath(asset.relativePath)}`,
+        content: asset.content,
+        targetFormat: format,
+      });
+    }
+  }
+
+  for (const asset of pkg.sharedAssets) {
+    emitted.push({
+      relativePath: `${basePrefix}${normalizePosixPath(asset.relativePath)}`,
+      content: asset.content,
+      targetFormat: format,
+    });
+  }
+
+  for (const rule of pkg.rootRules) {
+    const normalized = rule.content.replace(/\r\n/g, '\n');
+    const content = normalized.endsWith('\n') ? normalized : `${normalized}\n`;
+    emitted.push({
+      relativePath: meta.rootRuleFile,
+      content: Buffer.from(content, 'utf8'),
+      targetFormat: format,
+    });
+  }
+
+  return emitted;
+}

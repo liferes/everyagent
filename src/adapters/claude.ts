@@ -1,0 +1,35 @@
+import os from 'node:os';
+import path from 'node:path';
+import type { EmittedFile, SourceFile, UniskillPackage } from '../core/ir.js';
+import {
+  detectSkillMdFormat,
+  emitSkillMdFormat,
+  parseSkillMdFormat,
+  type Adapter,
+  type DetectionResult,
+  type EmitOptions,
+  type ParseOptions,
+} from './types.js';
+
+export const claudeAdapter: Adapter = {
+  id: 'claude',
+  label: 'Claude Code (.claude/)',
+  configDir: '.claude',
+  rootRuleFile: 'CLAUDE.md',
+
+  getGlobalDir(): string {
+    return path.join(os.homedir(), '.claude');
+  },
+
+  detect(files: SourceFile[], options?: ParseOptions): DetectionResult | null {
+    return detectSkillMdFormat('claude', files, options);
+  },
+
+  parse(files: SourceFile[], options?: ParseOptions): UniskillPackage {
+    return parseSkillMdFormat('claude', files, options);
+  },
+
+  emit(pkg: UniskillPackage, options?: EmitOptions): EmittedFile[] {
+    return emitSkillMdFormat('claude', pkg, options, true);
+  },
+};

@@ -1,0 +1,46 @@
+{
+  "name": "uniskill",
+  "version": "0.1.0",
+  "description": "Convert and install AI-agent skills between Cursor, Claude Code, OpenCode, and Codex CLI",
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "bin": {
+    "uniskill": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run typecheck && npm run build && npm test"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "skills",
+    "cursor",
+    "claude",
+    "opencode",
+    "codex",
+    "cli"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@clack/prompts": "^0.10.1",
+    "cac": "^6.7.14",
+    "gray-matter": "^4.0.3",
+    "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "tsup": "^8.5.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.3"
+  }
+}
