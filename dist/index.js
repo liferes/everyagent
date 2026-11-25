@@ -5876,6 +5876,19 @@ function convertAndWrite(options2) {
 // src/core/sync.ts
 import fs5 from "fs";
 import path12 from "path";
+function entryKeepsConfigAssets(entry) {
+  if (entry.includeConfigAssets !== void 0) {
+    return entry.includeConfigAssets;
+  }
+  return entry.files.some((file) => {
+    const normalized = normalizePosixPath(file.path);
+    if (isConfigAssetPath(normalized)) {
+      return true;
+    }
+    const withoutConfigDir = normalized.split("/").slice(1).join("/");
+    return withoutConfigDir !== "" && isConfigAssetPath(withoutConfigDir);
+  });
+}
 function planSyncForEntry(entry, emittedFiles, diskHashes, installDir) {
   const resolvedRoot = path12.resolve(installDir);
   const recordedByPath = /* @__PURE__ */ new Map();
@@ -8534,7 +8547,7 @@ function emitForSyncEntry(pkg, entry) {
     const wanted = new Set(entry.skills.map((s) => s.toLowerCase()));
     skills = pkg.skills.filter((s) => wanted.has(s.name.toLowerCase()));
   }
-  const sharedAssets = entry.includeSharedAssets === false ? [] : entry.includeConfigAssets === true ? pkg.sharedAssets : pkg.sharedAssets.filter((a) => !isConfigAssetPath(a.relativePath));
+  const sharedAssets = entry.includeSharedAssets === false ? [] : entryKeepsConfigAssets(entry) ? pkg.sharedAssets : pkg.sharedAssets.filter((a) => !isConfigAssetPath(a.relativePath));
   const scopedPkg = {
     ...pkg,
     skills,

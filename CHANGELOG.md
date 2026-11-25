@@ -11,6 +11,7 @@ Config files stop riding along by default.
 - `settings.json`, `settings.local.json`, `mcp.json`, `.mcp.json`, and anything under `hooks/` are no longer copied. They can contain API keys and env vars, and only the tool that wrote them understands the format.
 - `--with-config` copies them anyway. The wizard shows them as their own group, labelled, so picking them is a deliberate choice.
 - Everything else still travels: skills, root rules, companion files, `commands/`, `agents/`.
+- An install made before 1.2.0 keeps whatever config files it already tracks, so the first `sync` after upgrading deletes nothing.
 
 ## 1.1.0 (2026-11-25)
 

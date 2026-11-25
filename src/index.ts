@@ -37,6 +37,7 @@ import { rewritePackage } from './core/rewriter.js';
 import {
   applyRemovePlan,
   applySyncPlan,
+  entryKeepsConfigAssets,
   planRemove,
   planSyncForEntry,
   type SyncEntryPlan,
@@ -79,7 +80,7 @@ function emitForSyncEntry(
   const sharedAssets =
     entry.includeSharedAssets === false
       ? []
-      : entry.includeConfigAssets === true
+      : entryKeepsConfigAssets(entry)
         ? pkg.sharedAssets
         : pkg.sharedAssets.filter((a) => !isConfigAssetPath(a.relativePath));
 

@@ -22,6 +22,7 @@ import { convertAndWrite, fetchAndDetect, parseDetectedPackage } from '../src/co
 import {
   applyRemovePlan,
   applySyncPlan,
+  entryKeepsConfigAssets,
   planRemove,
   planSyncForEntry,
 } from '../src/core/sync.js';
@@ -539,5 +540,69 @@ describe('CLI subcommand dispatch & lint', () => {
     expect(rules).toContain('duplicate-name');
     expect(rules).toContain('broken-link');
     expect(rules).toContain('description-length');
+  });
+});
+
+describe('config assets survive an upgrade from a pre-1.2.0 manifest', () => {
+  function legacyEntry(files: string[]): ManifestInstallEntry {
+    return {
+      source: 'owner/repo',
+      ref: null,
+      subpath: null,
+      sourceFormat: 'claude',
+      targetFormat: 'opencode',
+      global: false,
+      targetDir: null,
+      installedAt: '2026-11-24T00:00:00.000Z',
+      files: files.map((p) => ({ path: p, sha256: 'a'.repeat(64) })),
+    };
+  }
+
+  it('reads the recorded files when the flag is missing', () => {
+    expect(
+      entryKeepsConfigAssets(
+        legacyEntry(['.opencode/skills/demo/SKILL.md', '.opencode/settings.json']),
+      ),
+    ).toBe(true);
+    expect(entryKeepsConfigAssets(legacyEntry(['.opencode/hooks/pre.sh']))).toBe(
+      true,
+    );
+    expect(
+      entryKeepsConfigAssets(legacyEntry(['.opencode/skills/demo/SKILL.md'])),
+    ).toBe(false);
+  });
+
+  it('lets an explicit flag win over the recorded files', () => {
+    expect(entryKeepsConfigAssets({ ...legacyEntry([]), includeConfigAssets: false })).toBe(
+      false,
+    );
+    expect(entryKeepsConfigAssets({ ...legacyEntry([]), includeConfigAssets: true })).toBe(
+      true,
+    );
+  });
+
+  it('does not delete a settings file a legacy entry still tracks', () => {
+    const dest = makeTempDir('legacy-config-');
+    const settingsRel = '.opencode/settings.json';
+    const settingsPath = path.join(dest, settingsRel);
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fs.writeFileSync(settingsPath, '{"env":{"A":"1"}}\n');
+
+    const entry = legacyEntry([settingsRel]);
+    expect(entryKeepsConfigAssets(entry)).toBe(true);
+
+    const emitted = [
+      {
+        targetFormat: 'opencode' as const,
+        relativePath: settingsRel,
+        content: Buffer.from('{"env":{"A":"1"}}\n', 'utf8'),
+      },
+    ];
+    const plan = planSyncForEntry(entry, emitted, new Map(), dest);
+
+    expect(plan.actions.find((a) => a.relativePath === settingsRel)?.kind).toBe(
+      'unchanged',
+    );
+    expect(plan.actions.some((a) => a.kind === 'delete')).toBe(false);
   });
 });

@@ -1,6 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { normalizePosixPath, resolveWithin, type EmittedFile } from './ir.js';
+import {
+  isConfigAssetPath,
+  normalizePosixPath,
+  resolveWithin,
+  type EmittedFile,
+} from './ir.js';
 import {
   getInstallDir,
   hashBuffer,
@@ -10,6 +15,25 @@ import {
   type ManifestInstallEntry,
   type EveryagentManifest,
 } from './manifest.js';
+
+/**
+ * Manifests written before 1.2.0 copied settings and hooks by default and had
+ * no flag saying so. Fall back to the recorded file list, otherwise a plain
+ * `sync` from an older install would delete the config files it once placed.
+ */
+export function entryKeepsConfigAssets(entry: ManifestInstallEntry): boolean {
+  if (entry.includeConfigAssets !== undefined) {
+    return entry.includeConfigAssets;
+  }
+  return entry.files.some((file) => {
+    const normalized = normalizePosixPath(file.path);
+    if (isConfigAssetPath(normalized)) {
+      return true;
+    }
+    const withoutConfigDir = normalized.split('/').slice(1).join('/');
+    return withoutConfigDir !== '' && isConfigAssetPath(withoutConfigDir);
+  });
+}
 
 export type SyncActionKind =
   | 'create'
