@@ -5,6 +5,7 @@ import { normalizePosixPath, type EmittedFile, type FormatId } from './ir.js';
 export type WriteStatus =
   | 'created'
   | 'overwritten'
+  | 'unchanged'
   | 'skipped'
   | 'duplicate'
   | 'conflict';
@@ -20,6 +21,7 @@ export interface WriteAction {
 export interface WriteSummary {
   created: number;
   overwritten: number;
+  unchanged: number;
   skipped: number;
   duplicate: number;
   conflict: number;
@@ -50,6 +52,7 @@ export function writeEmittedFiles(
   const summary: WriteSummary = {
     created: 0,
     overwritten: 0,
+    unchanged: 0,
     skipped: 0,
     duplicate: 0,
     conflict: 0,
@@ -84,15 +87,27 @@ export function writeEmittedFiles(
         status = 'conflict';
         summary.conflict += 1;
       }
-    } else if (exists && !force) {
-      status = 'skipped';
-      summary.skipped += 1;
-    } else if (exists && force) {
-      status = 'overwritten';
-      summary.overwritten += 1;
-      if (!dryRun) {
-        fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
-        fs.writeFileSync(absolutePath, file.content);
+    } else if (exists) {
+      let existingBuffer: Buffer | undefined;
+      try {
+        existingBuffer = fs.readFileSync(absolutePath);
+      } catch {
+        existingBuffer = undefined;
+      }
+
+      if (existingBuffer && existingBuffer.equals(file.content)) {
+        status = 'unchanged';
+        summary.unchanged += 1;
+      } else if (!force) {
+        status = 'skipped';
+        summary.skipped += 1;
+      } else {
+        status = 'overwritten';
+        summary.overwritten += 1;
+        if (!dryRun) {
+          fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+          fs.writeFileSync(absolutePath, file.content);
+        }
       }
     } else {
       status = 'created';

@@ -1,13 +1,24 @@
 import { detectFormats, getAdapter } from '../adapters/registry.js';
 import type { DetectionResult } from '../adapters/types.js';
 import { fetchSource, type FetchResult } from './fetcher.js';
-import type { FormatId, SourceFile, UniskillPackage } from './ir.js';
+import { findClosestMatches, normalizeToken } from './fuzzy.js';
+import type { FormatId, Skill, SourceFile, UniskillPackage } from './ir.js';
+import { FORMAT_META, normalizePosixPath, type EmittedFile } from './ir.js';
 import { rewritePackage } from './rewriter.js';
 import { writeEmittedFiles, type WriteSummary } from './writer.js';
 
 export interface DetectSourceResult {
   fetchResult: FetchResult;
   detections: DetectionResult[];
+}
+
+export interface PackageSelection {
+  /** Skill names to include. Undefined means include all skills. */
+  skillNames?: string[];
+  /** Include root rules (CLAUDE.md, .cursorrules, AGENTS.md). Default: true. */
+  includeRootRules?: boolean;
+  /** Include shared config assets. Default: true. */
+  includeSharedAssets?: boolean;
 }
 
 export interface ConvertAndWriteOptions {
@@ -20,6 +31,8 @@ export interface ConvertAndWriteOptions {
   dryRun?: boolean;
   subpathName?: string;
   allowLoose?: boolean;
+  pkg?: UniskillPackage;
+  selection?: PackageSelection;
 }
 
 export interface ConvertAndWriteResult {
@@ -71,19 +84,181 @@ export async function fetchAndDetect(
   return { fetchResult, detections };
 }
 
+/** Parse a detected format into the intermediate package representation. */
+export function parseDetectedPackage(
+  files: SourceFile[],
+  detection: DetectionResult,
+  subpathName?: string,
+): UniskillPackage {
+  return getAdapter(detection.format).parse(files, {
+    subpathName,
+    allowLoose: detection.allowLoose,
+  });
+}
+
+/** Only prompt the user to pick items when there is more than one selectable choice. */
+export function shouldPromptTranslationScope(pkg: UniskillPackage): boolean {
+  const totalChoices =
+    pkg.skills.length +
+    (pkg.rootRules.length > 0 ? 1 : 0) +
+    (pkg.sharedAssets.length > 0 ? 1 : 0);
+  return totalChoices > 1;
+}
+
+/** Narrow a parsed package down to selected skills, root rules, and shared assets. */
+export function filterPackage(
+  pkg: UniskillPackage,
+  selection?: PackageSelection,
+): UniskillPackage {
+  if (!selection) {
+    return pkg;
+  }
+
+  let skills = pkg.skills;
+  if (selection.skillNames !== undefined) {
+    const byLowerName = new Map<string, Skill>();
+    const byNormalizedName = new Map<string, Skill | 'ambiguous'>();
+    for (const skill of pkg.skills) {
+      const key = skill.name.toLowerCase();
+      if (!byLowerName.has(key)) {
+        byLowerName.set(key, skill);
+      }
+      const normKey = normalizeToken(skill.name);
+      if (normKey) {
+        const existing = byNormalizedName.get(normKey);
+        if (!existing) {
+          byNormalizedName.set(normKey, skill);
+        } else if (existing !== 'ambiguous' && existing.name.toLowerCase() !== key) {
+          byNormalizedName.set(normKey, 'ambiguous');
+        }
+      }
+    }
+
+    const selectedKeys = new Set<string>();
+    const missing: string[] = [];
+    for (const rawName of selection.skillNames) {
+      const trimmed = rawName.trim();
+      if (!trimmed) continue;
+      const key = trimmed.toLowerCase();
+      if (byLowerName.has(key)) {
+        selectedKeys.add(key);
+        continue;
+      }
+
+      const normMatch = byNormalizedName.get(normalizeToken(trimmed));
+      if (normMatch && normMatch !== 'ambiguous') {
+        selectedKeys.add(normMatch.name.toLowerCase());
+      } else {
+        missing.push(trimmed);
+      }
+    }
+
+    if (missing.length > 0) {
+      const missingText = missing.map((n) => `"${n}"`).join(', ');
+      if (pkg.skills.length === 0) {
+        throw new Error(
+          `Skill(s) not found: ${missingText}. No skills were found in this source.`,
+        );
+      }
+      const availableNames = pkg.skills.map((s) => s.name);
+      const suggestions = new Set<string>();
+      for (const missed of missing) {
+        for (const match of findClosestMatches(missed, availableNames)) {
+          suggestions.add(match);
+        }
+      }
+      const suggestionText =
+        suggestions.size > 0
+          ? ` Did you mean: ${Array.from(suggestions).join(', ')}?`
+          : '';
+      throw new Error(
+        `Skill(s) not found: ${missingText}.${suggestionText} Available skills: ${availableNames.join(', ')}.`,
+      );
+    }
+
+    skills = pkg.skills.filter((skill) =>
+      selectedKeys.has(skill.name.toLowerCase()),
+    );
+  }
+
+  const rootRules = selection.includeRootRules === false ? [] : pkg.rootRules;
+  const sharedAssets =
+    selection.includeSharedAssets === false ? [] : pkg.sharedAssets;
+
+  if (
+    skills.length === 0 &&
+    rootRules.length === 0 &&
+    sharedAssets.length === 0
+  ) {
+    throw new Error(
+      'Nothing selected to translate. Select at least one skill, root rule, or shared asset.',
+    );
+  }
+
+  return {
+    ...pkg,
+    skills,
+    rootRules,
+    sharedAssets,
+  };
+}
+
+/**
+ * Two source items can resolve to the same output path (same `name:` in two
+ * folders, or an asset that shadows a neighbour). Writing one silently would
+ * lose the other, so refuse before anything touches disk.
+ */
+function assertUniqueOutputs(
+  emitted: EmittedFile[],
+  targetFormat: FormatId,
+): void {
+  const seen = new Map<string, Buffer>();
+  for (const file of emitted) {
+    const rel = normalizePosixPath(file.relativePath);
+    const previous = seen.get(rel);
+    if (!previous) {
+      seen.set(rel, file.content);
+      continue;
+    }
+    if (previous.equals(file.content)) {
+      continue;
+    }
+    throw new Error(
+      `Two source items both write "${rel}" for ${FORMAT_META[targetFormat].label} with different content. Rename one of them, or install them separately with --skill.`,
+    );
+  }
+}
+
 /** Source files in, one rewritten copy per target out, written to disk. */
 export function convertAndWrite(
   options: ConvertAndWriteOptions,
 ): ConvertAndWriteResult {
   const sourceAdapter = getAdapter(options.sourceFormat);
-  const pkg = sourceAdapter.parse(options.files, {
-    subpathName: options.subpathName,
-    allowLoose: options.allowLoose,
+  const parsedPkg =
+    options.pkg ??
+    sourceAdapter.parse(options.files, {
+      subpathName: options.subpathName,
+      allowLoose: options.allowLoose,
+    });
+  const pkg = options.selection
+    ? filterPackage(parsedPkg, options.selection)
+    : parsedPkg;
+
+  // Build and validate every target first, so a collision in the last format
+  // cannot leave the earlier ones half-written.
+  const planned = options.targetFormats.map((targetFormat) => {
+    const targetAdapter = getAdapter(targetFormat);
+    const emitted = targetAdapter.emit(rewritePackage(pkg, targetFormat), {
+      global: options.global,
+    });
+    assertUniqueOutputs(emitted, targetFormat);
+    return { targetFormat, emitted };
   });
 
   const combined: WriteSummary = {
     created: 0,
     overwritten: 0,
+    unchanged: 0,
     skipped: 0,
     duplicate: 0,
     conflict: 0,
@@ -92,14 +267,9 @@ export function convertAndWrite(
 
   const seenPaths = new Map<string, Buffer>();
 
-  for (const targetFormat of options.targetFormats) {
-    const targetAdapter = getAdapter(targetFormat);
-    const rewrittenPkg = rewritePackage(pkg, targetFormat);
-    const emitted = targetAdapter.emit(rewrittenPkg, {
-      global: options.global,
-    });
+  for (const { targetFormat, emitted } of planned) {
     const destination = options.global
-      ? targetAdapter.getGlobalDir()
+      ? getAdapter(targetFormat).getGlobalDir()
       : options.targetDir;
 
     const result = writeEmittedFiles(emitted, destination, {
@@ -110,6 +280,7 @@ export function convertAndWrite(
 
     combined.created += result.created;
     combined.overwritten += result.overwritten;
+    combined.unchanged += result.unchanged;
     combined.skipped += result.skipped;
     combined.duplicate += result.duplicate;
     combined.conflict += result.conflict;

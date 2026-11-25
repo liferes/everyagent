@@ -3491,7 +3491,7 @@ var require_parse = __commonJS({
 var require_gray_matter = __commonJS({
   "node_modules/gray-matter/index.js"(exports2, module2) {
     "use strict";
-    var fs3 = __require("fs");
+    var fs4 = __require("fs");
     var sections = require_section_matter();
     var defaults = require_defaults();
     var stringify = require_stringify();
@@ -3575,7 +3575,7 @@ var require_gray_matter = __commonJS({
       return stringify(file, data, options2);
     };
     matter2.read = function(filepath, options2) {
-      const str2 = fs3.readFileSync(filepath, "utf8");
+      const str2 = fs4.readFileSync(filepath, "utf8");
       const file = matter2(str2, options2);
       file.path = filepath;
       return file;
@@ -3661,6 +3661,7 @@ var require_src = __commonJS({
 
 // src/index.ts
 var import_picocolors5 = __toESM(require_picocolors(), 1);
+import path8 from "path";
 
 // src/adapters/claude.ts
 import os from "os";
@@ -3794,6 +3795,10 @@ function rewritePaths(text, sourceFormat, targetFormat) {
   let result = text;
   if (sourceFormat === "cursor") {
     result = result.replace(
+      /\.cursor\/rules\/([^/\s`'")\]]+)\.mdc\b/g,
+      `${targetMeta.configDir}/skills/$1/SKILL.md`
+    );
+    result = result.replace(
       /\.cursor\/rules\/([^/\s`'")\]]+)\//g,
       `${targetMeta.configDir}/skills/$1/`
     );
@@ -3812,6 +3817,10 @@ function rewritePaths(text, sourceFormat, targetFormat) {
       "g"
     );
     result = result.replace(sourceSkillsRootRe, ".cursor/rules/");
+    result = result.replace(
+      /\.cursor\/rules\/([^/\s`'")\]]+)\/SKILL\.md\b/g,
+      ".cursor/rules/$1.mdc"
+    );
   } else {
     const sourceSkillsRe = new RegExp(
       `${escapeRegex(sourceMeta.configDir)}\\/skills\\/`,
@@ -3900,7 +3909,7 @@ function serializeMarkdownWithFrontmatter(body, frontmatter) {
   if (Object.keys(cleanData).length === 0) {
     return Buffer.from(withTrailingNewline, "utf8");
   }
-  const output = import_gray_matter.default.stringify(withTrailingNewline, cleanData);
+  const output = import_gray_matter.default.stringify({ content: withTrailingNewline }, cleanData);
   const ensured = output.endsWith("\n") ? output : `${output}
 `;
   return Buffer.from(ensured, "utf8");
@@ -3941,7 +3950,7 @@ function detectSkillMdFormat(format, files, options2) {
   if (options2?.allowLoose && skillPaths.length === 0 && otherConfigPaths.length === 0) {
     for (const file of files) {
       const p2 = normalizePosixPath(file.path);
-      if (p2 === "SKILL.md" || /^[^/]+\/SKILL\.md$/.test(p2)) {
+      if (p2 === "SKILL.md" || p2.endsWith("/SKILL.md")) {
         skillPaths.push(p2);
         allowLoose = true;
       }
@@ -3999,27 +4008,32 @@ function parseSkillMdFormat(format, files, options2) {
   if (options2?.allowLoose && skillRoots.length === 0) {
     for (const file of files) {
       const p2 = normalizePosixPath(file.path);
-      if (p2 === "SKILL.md") {
-        const parsed = parseMarkdownWithFrontmatter(file.content.toString("utf8"));
-        const inferred = typeof parsed.data.name === "string" && parsed.data.name.trim() || options2.subpathName || "skill";
-        skillRoots.push({
-          skillName: sanitizeSkillName(inferred),
-          rootDir: "",
-          file
-        });
-      } else if (/^[^/]+\/SKILL\.md$/.test(p2)) {
-        const skillDir = p2.slice(0, -"/SKILL.md".length);
-        skillRoots.push({
-          skillName: sanitizeSkillName(skillDir),
-          rootDir: `${skillDir}/`,
-          file
-        });
+      if (p2 !== "SKILL.md" && !p2.endsWith("/SKILL.md")) {
+        continue;
       }
+      const dir = p2 === "SKILL.md" ? "" : p2.slice(0, -"SKILL.md".length);
+      const folder = dir ? dir.slice(0, -1).split("/").pop() ?? "" : "";
+      skillRoots.push({
+        skillName: folder ? sanitizeSkillName(folder) : "",
+        rootDir: dir,
+        file
+      });
     }
   }
+  const entryPaths = new Set(
+    skillRoots.map((sr) => normalizePosixPath(sr.file.path))
+  );
   for (const entry of skillRoots) {
     const raw = entry.file.content.toString("utf8");
-    const { data, body } = parseMarkdownWithFrontmatter(raw);
+    let parsed;
+    try {
+      parsed = parseMarkdownWithFrontmatter(raw);
+    } catch (err) {
+      throw new Error(
+        `Could not parse frontmatter in "${entry.file.path}": ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+    const { data, body } = parsed;
     const {
       name,
       description,
@@ -4028,7 +4042,9 @@ function parseSkillMdFormat(format, files, options2) {
       alwaysApply,
       ...rest
     } = data;
-    const skillName = typeof name === "string" && name.trim() ? sanitizeSkillName(name.trim()) : sanitizeSkillName(entry.skillName);
+    const skillName = typeof name === "string" && name.trim() ? sanitizeSkillName(name.trim()) : sanitizeSkillName(
+      entry.skillName || options2?.subpathName || "skill"
+    );
     let allowedTools;
     if (typeof allowedToolsRaw === "string" && allowedToolsRaw.trim()) {
       allowedTools = allowedToolsRaw.trim();
@@ -4055,39 +4071,38 @@ function parseSkillMdFormat(format, files, options2) {
       });
       continue;
     }
-    const matchedRoot = skillRoots.find((sr) => normalizePosixPath(sr.file.path) === p2);
-    if (matchedRoot) {
+    if (entryPaths.has(p2)) {
       continue;
     }
-    let attachedToSkill = false;
+    let owner;
     for (const sr of skillRoots) {
-      if (sr.rootDir && p2.startsWith(sr.rootDir)) {
-        const rel = p2.slice(sr.rootDir.length);
-        const skill = skillsMap.get(sr.rootDir);
-        if (skill && rel) {
-          skill.assets.push({
-            relativePath: rel,
-            content: file.content,
-            isText: isTextFile(p2, file.content)
-          });
-          attachedToSkill = true;
-          break;
-        }
-      } else if (!sr.rootDir && !p2.startsWith(configPrefix)) {
-        const skill = skillsMap.get("__ROOT__");
-        if (skill) {
-          skill.assets.push({
-            relativePath: p2,
-            content: file.content,
-            isText: isTextFile(p2, file.content)
-          });
-          attachedToSkill = true;
-          break;
-        }
+      if (!sr.rootDir || !p2.startsWith(sr.rootDir)) continue;
+      if (!owner || sr.rootDir.length > owner.rootDir.length) {
+        owner = sr;
       }
     }
-    if (attachedToSkill) {
-      continue;
+    if (owner) {
+      const rel = p2.slice(owner.rootDir.length);
+      const skill = skillsMap.get(owner.rootDir);
+      if (skill && rel) {
+        skill.assets.push({
+          relativePath: rel,
+          content: file.content,
+          isText: isTextFile(p2, file.content)
+        });
+        continue;
+      }
+    }
+    if (skillRoots.some((sr) => !sr.rootDir) && !p2.startsWith(configPrefix)) {
+      const skill = skillsMap.get("__ROOT__");
+      if (skill) {
+        skill.assets.push({
+          relativePath: p2,
+          content: file.content,
+          isText: isTextFile(p2, file.content)
+        });
+        continue;
+      }
     }
     if (p2.startsWith(configPrefix)) {
       const rel = p2.slice(configPrefix.length);
@@ -4489,9 +4504,152 @@ function detectFormats(files, options2) {
   return looseResults;
 }
 
-// src/core/fetcher.ts
+// src/core/detector.ts
 import fs from "fs";
 import path5 from "path";
+var IGNORED_DIRS = /* @__PURE__ */ new Set([".git", "node_modules", "dist"]);
+var KNOWN_CONFIG_DIRS = [".cursor", ".claude", ".opencode", ".codex"];
+var KNOWN_ROOT_FILES = /* @__PURE__ */ new Set([
+  ".cursorrules",
+  "CLAUDE.md",
+  "AGENTS.md",
+  "SKILL.md"
+]);
+function existsSafe(targetPath) {
+  try {
+    return fs.existsSync(targetPath);
+  } catch {
+    return false;
+  }
+}
+function isDirSafe(targetPath) {
+  try {
+    return fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+function maybeExcludeSource(formats, options2) {
+  if (options2.excludeSourceWhenLocal && options2.sourceFormat) {
+    return formats.filter((id) => id !== options2.sourceFormat);
+  }
+  return formats;
+}
+function detectTargetFormats(options2) {
+  if (!options2.global) {
+    const resolvedDir = path5.resolve(options2.targetDir);
+    if (isDirSafe(resolvedDir)) {
+      const projectFormats = [];
+      for (const id of FORMAT_IDS) {
+        if (id === "cursor") {
+          if (existsSafe(path5.join(resolvedDir, ".cursor")) || existsSafe(path5.join(resolvedDir, ".cursorrules"))) {
+            projectFormats.push(id);
+          }
+        } else if (id === "claude") {
+          if (existsSafe(path5.join(resolvedDir, ".claude")) || existsSafe(path5.join(resolvedDir, "CLAUDE.md"))) {
+            projectFormats.push(id);
+          }
+        } else if (id === "opencode") {
+          if (existsSafe(path5.join(resolvedDir, ".opencode"))) {
+            projectFormats.push(id);
+          }
+        } else if (id === "codex") {
+          if (existsSafe(path5.join(resolvedDir, ".codex"))) {
+            projectFormats.push(id);
+          }
+        }
+      }
+      const filtered = maybeExcludeSource(projectFormats, options2);
+      if (filtered.length > 0) {
+        return { formats: filtered, scope: "project" };
+      }
+    }
+  }
+  const resolveGlobal = options2.globalDirResolver ?? ((id) => getAdapter(id).getGlobalDir());
+  const globalFormats = [];
+  for (const id of FORMAT_IDS) {
+    if (existsSafe(resolveGlobal(id))) {
+      globalFormats.push(id);
+    }
+  }
+  const filteredGlobal = maybeExcludeSource(globalFormats, options2);
+  if (filteredGlobal.length > 0) {
+    return { formats: filteredGlobal, scope: "global" };
+  }
+  return { formats: [], scope: "none" };
+}
+function collectDirFiles(rootDir, subDir, out) {
+  const startDir = path5.join(rootDir, subDir);
+  if (!isDirSafe(startDir)) {
+    return;
+  }
+  function walk(currentDir) {
+    const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (IGNORED_DIRS.has(entry.name)) {
+          continue;
+        }
+        walk(path5.join(currentDir, entry.name));
+      } else if (entry.isFile()) {
+        const abs = path5.join(currentDir, entry.name);
+        const rel = normalizePosixPath(path5.relative(rootDir, abs));
+        if (rel) {
+          out.push({ path: rel, content: fs.readFileSync(abs) });
+        }
+      }
+    }
+  }
+  walk(startDir);
+}
+function detectLocalProjectSource(dir) {
+  const resolvedDir = path5.resolve(dir);
+  if (!isDirSafe(resolvedDir)) {
+    return null;
+  }
+  const files = [];
+  for (const configDir of KNOWN_CONFIG_DIRS) {
+    collectDirFiles(resolvedDir, configDir, files);
+  }
+  let topEntries = [];
+  try {
+    topEntries = fs.readdirSync(resolvedDir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const entry of topEntries) {
+    if (!entry.isFile()) continue;
+    if (KNOWN_ROOT_FILES.has(entry.name) || entry.name.endsWith(".mdc")) {
+      const abs = path5.join(resolvedDir, entry.name);
+      files.push({
+        path: entry.name,
+        content: fs.readFileSync(abs)
+      });
+    }
+  }
+  if (files.length === 0) {
+    return null;
+  }
+  const detections = detectFormats(files);
+  if (detections.length === 0) {
+    return null;
+  }
+  return {
+    fetchResult: {
+      source: {
+        type: "local",
+        localPath: resolvedDir,
+        displayLabel: path5.basename(resolvedDir) || resolvedDir
+      },
+      files
+    },
+    detections
+  };
+}
+
+// src/core/fetcher.ts
+import fs2 from "fs";
+import path6 from "path";
 import zlib from "zlib";
 var VALID_SEGMENT_RE = /^[A-Za-z0-9_.-]+$/;
 var IGNORED_LOCAL_DIRS = /* @__PURE__ */ new Set([".git", "node_modules", "dist"]);
@@ -4500,33 +4658,48 @@ function parseGitHubSource(rawInput) {
   if (!input) {
     throw new Error("Source repository or path cannot be empty.");
   }
-  if (fs.existsSync(input)) {
-    const stat = fs.statSync(input);
+  if (fs2.existsSync(input)) {
+    const stat = fs2.statSync(input);
     if (stat.isDirectory()) {
-      const resolved = path5.resolve(input);
+      const resolved = path6.resolve(input);
       return {
         type: "local",
         localPath: resolved,
-        displayLabel: path5.basename(resolved) || resolved
+        displayLabel: path6.basename(resolved) || resolved
       };
     }
   }
-  let normalized = input;
+  let normalized = input.replace(/^git\s+clone\s+/i, "").trim();
   const mdLinkMatch = normalized.match(/^\[[^\]]+\]\((https?:\/\/[^)]+)\)$/);
   if (mdLinkMatch) {
     normalized = mdLinkMatch[1];
   }
-  if (/^https?:\/\//i.test(normalized)) {
+  normalized = normalized.replace(/[?#].*$/, "");
+  const scpSshMatch = normalized.match(/^git@github\.com:(.+)$/i);
+  if (scpSshMatch) {
+    normalized = scpSshMatch[1];
+  } else if (/^ssh:\/\/git@github\.com\//i.test(normalized)) {
+    normalized = normalized.replace(/^ssh:\/\/git@github\.com\//i, "");
+  } else if (/^https?:\/\//i.test(normalized)) {
     let url;
     try {
       url = new URL(normalized);
     } catch {
       throw new Error(`Invalid GitHub URL: "${input}"`);
     }
-    if (!/^(?:www\.)?github\.com$/i.test(url.hostname)) {
+    if (/^raw\.githubusercontent\.com$/i.test(url.hostname)) {
+      const rawSegments = url.pathname.replace(/^\/+/, "").split("/").filter(Boolean);
+      if (rawSegments.length < 4) {
+        throw new Error(`Invalid raw GitHub URL: "${input}"`);
+      }
+      const [rawOwner, rawRepo, ...rest] = rawSegments;
+      const trimmedRest = rest[0] === "refs" && (rest[1] === "heads" || rest[1] === "tags") && rest.length >= 4 ? rest.slice(2) : rest;
+      normalized = [rawOwner, rawRepo, "blob", ...trimmedRest].join("/");
+    } else if (/^(?:www\.)?github\.com$/i.test(url.hostname)) {
+      normalized = url.pathname.replace(/^\/+/, "");
+    } else {
       throw new Error(`Only github.com repositories are supported (got "${url.hostname}").`);
     }
-    normalized = url.pathname.replace(/^\/+/, "");
   } else if (/^(?:www\.)?github\.com\//i.test(normalized)) {
     normalized = normalized.replace(/^(?:www\.)?github\.com\//i, "");
   }
@@ -4544,11 +4717,26 @@ function parseGitHubSource(rawInput) {
   }
   let ref;
   let subpath;
+  let fileFilter;
   if (segments.length > 2) {
     if (segments[2] === "tree" && segments.length >= 4) {
       ref = segments[3];
       if (segments.length > 4) {
         subpath = segments.slice(4).join("/");
+      }
+    } else if (segments[2] === "blob" && segments.length >= 5) {
+      ref = segments[3];
+      const fileSegments = segments.slice(4);
+      const fileName = fileSegments[fileSegments.length - 1];
+      const parentDir = fileSegments.slice(0, -1).join("/") || void 0;
+      const lowerFile = fileName.toLowerCase();
+      if (lowerFile === "skill.md") {
+        subpath = parentDir;
+      } else if (lowerFile.endsWith(".mdc") || lowerFile === "claude.md" || lowerFile === "agents.md" || lowerFile === ".cursorrules") {
+        subpath = parentDir;
+        fileFilter = fileName;
+      } else {
+        subpath = parentDir;
       }
     } else {
       throw new Error(
@@ -4556,13 +4744,15 @@ function parseGitHubSource(rawInput) {
       );
     }
   }
-  const displayLabel = subpath ? `${owner}/${repo}/${subpath}` : ref ? `${owner}/${repo}@${ref}` : `${owner}/${repo}`;
+  const displayPath = [subpath, fileFilter].filter(Boolean).join("/");
+  const displayLabel = displayPath ? `${owner}/${repo}/${displayPath}` : ref ? `${owner}/${repo}@${ref}` : `${owner}/${repo}`;
   return {
     type: "github",
     owner,
     repo,
     ref,
     subpath,
+    ...fileFilter ? { fileFilter } : {},
     displayLabel
   };
 }
@@ -4611,9 +4801,10 @@ function isSafeRelativePath(posixPath) {
   const parts = posixPath.split("/");
   return !parts.some((part) => part === ".." || part === "");
 }
-function extractTarGz(gzipBuffer, subpath) {
+function extractTarGz(gzipBuffer, subpath, fileFilter) {
   const tarBuffer = zlib.gunzipSync(gzipBuffer);
   const normalizedSubpath = subpath ? normalizePosixPath(subpath) : "";
+  const normalizedFilter = fileFilter ? normalizePosixPath(fileFilter) : "";
   const files = [];
   let offset = 0;
   let nextLongName;
@@ -4672,6 +4863,16 @@ function extractTarGz(gzipBuffer, subpath) {
     if (!relPath || !isSafeRelativePath(relPath)) {
       continue;
     }
+    if (normalizedFilter) {
+      if (normalizedFilter.toLowerCase().endsWith(".mdc")) {
+        const stem = normalizedFilter.slice(0, -".mdc".length);
+        if (relPath !== normalizedFilter && !relPath.startsWith(`${stem}/`)) {
+          continue;
+        }
+      } else if (relPath !== normalizedFilter) {
+        continue;
+      }
+    }
     files.push({ path: relPath, content });
   }
   return files;
@@ -4679,20 +4880,20 @@ function extractTarGz(gzipBuffer, subpath) {
 function readLocalDirectory(rootDir) {
   const files = [];
   function walk(currentDir) {
-    const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    const entries = fs2.readdirSync(currentDir, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isDirectory()) {
         if (IGNORED_LOCAL_DIRS.has(entry.name)) {
           continue;
         }
-        walk(path5.join(currentDir, entry.name));
+        walk(path6.join(currentDir, entry.name));
       } else if (entry.isFile()) {
-        const abs = path5.join(currentDir, entry.name);
-        const rel = normalizePosixPath(path5.relative(rootDir, abs));
+        const abs = path6.join(currentDir, entry.name);
+        const rel = normalizePosixPath(path6.relative(rootDir, abs));
         if (rel) {
           files.push({
             path: rel,
-            content: fs.readFileSync(abs)
+            content: fs2.readFileSync(abs)
           });
         }
       }
@@ -4754,7 +4955,7 @@ async function fetchSource(input) {
     source.repo,
     source.ref
   );
-  const files = extractTarGz(tarball, source.subpath);
+  const files = extractTarGz(tarball, source.subpath, source.fileFilter);
   if (files.length === 0) {
     if (source.subpath) {
       throw new Error(
@@ -4763,7 +4964,7 @@ async function fetchSource(input) {
     }
     throw new Error(`Repository "${source.owner}/${source.repo}" appears to be empty.`);
   }
-  const subpathName = source.subpath ? path5.posix.basename(normalizePosixPath(source.subpath)) : void 0;
+  const subpathName = source.subpath ? path6.posix.basename(normalizePosixPath(source.subpath)) : void 0;
   return {
     source,
     files,
@@ -4771,17 +4972,111 @@ async function fetchSource(input) {
   };
 }
 
+// src/core/fuzzy.ts
+var FORMAT_ALIASES = {
+  claude: "claude",
+  claudecode: "claude",
+  cc: "claude",
+  claudemd: "claude",
+  opencode: "opencode",
+  oc: "opencode",
+  codex: "codex",
+  codexcli: "codex",
+  openaicodex: "codex",
+  cursor: "cursor",
+  cursorrules: "cursor",
+  mdc: "cursor"
+};
+function normalizeToken(raw) {
+  return raw.trim().toLowerCase().replace(/^\.+/, "").replace(/[-_\s]+/g, "");
+}
+function levenshteinDistance(a, b3) {
+  if (a === b3) return 0;
+  if (a.length === 0) return b3.length;
+  if (b3.length === 0) return a.length;
+  let prev = Array.from({ length: b3.length + 1 }, (_3, i) => i);
+  let curr = new Array(b3.length + 1);
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    const ca = a[i - 1];
+    for (let j2 = 1; j2 <= b3.length; j2++) {
+      const cost = ca === b3[j2 - 1] ? 0 : 1;
+      curr[j2] = Math.min(
+        curr[j2 - 1] + 1,
+        prev[j2] + 1,
+        prev[j2 - 1] + cost
+      );
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[b3.length];
+}
+function resolveFormatAlias(raw) {
+  const normalized = normalizeToken(raw);
+  if (!normalized) return null;
+  return FORMAT_ALIASES[normalized] ?? null;
+}
+function suggestFormat(raw) {
+  const normalized = normalizeToken(raw);
+  if (!normalized) return null;
+  let bestFormat = null;
+  let bestDistance = 3;
+  for (const id of FORMAT_IDS) {
+    const d3 = levenshteinDistance(normalized, id);
+    if (d3 < bestDistance) {
+      bestDistance = d3;
+      bestFormat = id;
+    }
+  }
+  for (const [alias, target] of Object.entries(FORMAT_ALIASES)) {
+    const d3 = levenshteinDistance(normalized, alias);
+    if (d3 < bestDistance) {
+      bestDistance = d3;
+      bestFormat = target;
+    }
+  }
+  return bestDistance <= 2 ? bestFormat : null;
+}
+function findClosestMatches(query, candidates, maxSuggestions = 3) {
+  const normQuery = normalizeToken(query);
+  if (!normQuery || candidates.length === 0) {
+    return [];
+  }
+  const maxDist = Math.max(2, Math.floor(normQuery.length * 0.4));
+  const scored = [];
+  for (const candidate of candidates) {
+    const normCand = normalizeToken(candidate);
+    if (!normCand) continue;
+    if (normCand === normQuery) {
+      scored.push({ candidate, score: -1 });
+      continue;
+    }
+    if (normCand.includes(normQuery) || normQuery.includes(normCand)) {
+      const lengthDiff = Math.abs(normCand.length - normQuery.length);
+      scored.push({ candidate, score: 0.5 + lengthDiff * 0.01 });
+      continue;
+    }
+    const dist = levenshteinDistance(normQuery, normCand);
+    if (dist <= maxDist) {
+      scored.push({ candidate, score: 1 + dist });
+    }
+  }
+  scored.sort((a, b3) => a.score - b3.score || a.candidate.localeCompare(b3.candidate));
+  return scored.slice(0, maxSuggestions).map((entry) => entry.candidate);
+}
+
 // src/core/writer.ts
-import fs2 from "fs";
-import path6 from "path";
+import fs3 from "fs";
+import path7 from "path";
 function writeEmittedFiles(files, targetDir, options2 = {}) {
   const force = Boolean(options2.force);
   const dryRun = Boolean(options2.dryRun);
   const seenPaths = options2.seenPaths ?? /* @__PURE__ */ new Map();
-  const resolvedRoot = path6.resolve(targetDir);
+  const resolvedRoot = path7.resolve(targetDir);
   const summary = {
     created: 0,
     overwritten: 0,
+    unchanged: 0,
     skipped: 0,
     duplicate: 0,
     conflict: 0,
@@ -4792,12 +5087,12 @@ function writeEmittedFiles(files, targetDir, options2 = {}) {
     if (!rel || rel.split("/").some((seg) => seg === "..")) {
       throw new Error(`Refusing unsafe target path "${file.relativePath}".`);
     }
-    const absolutePath = path6.resolve(resolvedRoot, rel);
-    if (absolutePath !== resolvedRoot && !absolutePath.startsWith(resolvedRoot + path6.sep)) {
+    const absolutePath = path7.resolve(resolvedRoot, rel);
+    if (absolutePath !== resolvedRoot && !absolutePath.startsWith(resolvedRoot + path7.sep)) {
       throw new Error(`Target path escapes destination directory: "${file.relativePath}".`);
     }
     const emittedEarlier = seenPaths.get(absolutePath);
-    const exists = fs2.existsSync(absolutePath);
+    const exists = fs3.existsSync(absolutePath);
     let status;
     if (emittedEarlier) {
       if (emittedEarlier.equals(file.content)) {
@@ -4807,22 +5102,33 @@ function writeEmittedFiles(files, targetDir, options2 = {}) {
         status = "conflict";
         summary.conflict += 1;
       }
-    } else if (exists && !force) {
-      status = "skipped";
-      summary.skipped += 1;
-    } else if (exists && force) {
-      status = "overwritten";
-      summary.overwritten += 1;
-      if (!dryRun) {
-        fs2.mkdirSync(path6.dirname(absolutePath), { recursive: true });
-        fs2.writeFileSync(absolutePath, file.content);
+    } else if (exists) {
+      let existingBuffer;
+      try {
+        existingBuffer = fs3.readFileSync(absolutePath);
+      } catch {
+        existingBuffer = void 0;
+      }
+      if (existingBuffer && existingBuffer.equals(file.content)) {
+        status = "unchanged";
+        summary.unchanged += 1;
+      } else if (!force) {
+        status = "skipped";
+        summary.skipped += 1;
+      } else {
+        status = "overwritten";
+        summary.overwritten += 1;
+        if (!dryRun) {
+          fs3.mkdirSync(path7.dirname(absolutePath), { recursive: true });
+          fs3.writeFileSync(absolutePath, file.content);
+        }
       }
     } else {
       status = "created";
       summary.created += 1;
       if (!dryRun) {
-        fs2.mkdirSync(path6.dirname(absolutePath), { recursive: true });
-        fs2.writeFileSync(absolutePath, file.content);
+        fs3.mkdirSync(path7.dirname(absolutePath), { recursive: true });
+        fs3.writeFileSync(absolutePath, file.content);
       }
     }
     if (!emittedEarlier) {
@@ -4871,28 +5177,137 @@ async function fetchAndDetect(source, fromFormat = "auto") {
   }
   return { fetchResult, detections };
 }
+function parseDetectedPackage(files, detection, subpathName) {
+  return getAdapter(detection.format).parse(files, {
+    subpathName,
+    allowLoose: detection.allowLoose
+  });
+}
+function shouldPromptTranslationScope(pkg) {
+  const totalChoices = pkg.skills.length + (pkg.rootRules.length > 0 ? 1 : 0) + (pkg.sharedAssets.length > 0 ? 1 : 0);
+  return totalChoices > 1;
+}
+function filterPackage(pkg, selection) {
+  if (!selection) {
+    return pkg;
+  }
+  let skills = pkg.skills;
+  if (selection.skillNames !== void 0) {
+    const byLowerName = /* @__PURE__ */ new Map();
+    const byNormalizedName = /* @__PURE__ */ new Map();
+    for (const skill of pkg.skills) {
+      const key = skill.name.toLowerCase();
+      if (!byLowerName.has(key)) {
+        byLowerName.set(key, skill);
+      }
+      const normKey = normalizeToken(skill.name);
+      if (normKey) {
+        const existing = byNormalizedName.get(normKey);
+        if (!existing) {
+          byNormalizedName.set(normKey, skill);
+        } else if (existing !== "ambiguous" && existing.name.toLowerCase() !== key) {
+          byNormalizedName.set(normKey, "ambiguous");
+        }
+      }
+    }
+    const selectedKeys = /* @__PURE__ */ new Set();
+    const missing = [];
+    for (const rawName of selection.skillNames) {
+      const trimmed = rawName.trim();
+      if (!trimmed) continue;
+      const key = trimmed.toLowerCase();
+      if (byLowerName.has(key)) {
+        selectedKeys.add(key);
+        continue;
+      }
+      const normMatch = byNormalizedName.get(normalizeToken(trimmed));
+      if (normMatch && normMatch !== "ambiguous") {
+        selectedKeys.add(normMatch.name.toLowerCase());
+      } else {
+        missing.push(trimmed);
+      }
+    }
+    if (missing.length > 0) {
+      const missingText = missing.map((n) => `"${n}"`).join(", ");
+      if (pkg.skills.length === 0) {
+        throw new Error(
+          `Skill(s) not found: ${missingText}. No skills were found in this source.`
+        );
+      }
+      const availableNames = pkg.skills.map((s) => s.name);
+      const suggestions = /* @__PURE__ */ new Set();
+      for (const missed of missing) {
+        for (const match of findClosestMatches(missed, availableNames)) {
+          suggestions.add(match);
+        }
+      }
+      const suggestionText = suggestions.size > 0 ? ` Did you mean: ${Array.from(suggestions).join(", ")}?` : "";
+      throw new Error(
+        `Skill(s) not found: ${missingText}.${suggestionText} Available skills: ${availableNames.join(", ")}.`
+      );
+    }
+    skills = pkg.skills.filter(
+      (skill) => selectedKeys.has(skill.name.toLowerCase())
+    );
+  }
+  const rootRules = selection.includeRootRules === false ? [] : pkg.rootRules;
+  const sharedAssets = selection.includeSharedAssets === false ? [] : pkg.sharedAssets;
+  if (skills.length === 0 && rootRules.length === 0 && sharedAssets.length === 0) {
+    throw new Error(
+      "Nothing selected to translate. Select at least one skill, root rule, or shared asset."
+    );
+  }
+  return {
+    ...pkg,
+    skills,
+    rootRules,
+    sharedAssets
+  };
+}
+function assertUniqueOutputs(emitted, targetFormat) {
+  const seen = /* @__PURE__ */ new Map();
+  for (const file of emitted) {
+    const rel = normalizePosixPath(file.relativePath);
+    const previous = seen.get(rel);
+    if (!previous) {
+      seen.set(rel, file.content);
+      continue;
+    }
+    if (previous.equals(file.content)) {
+      continue;
+    }
+    throw new Error(
+      `Two source items both write "${rel}" for ${FORMAT_META[targetFormat].label} with different content. Rename one of them, or install them separately with --skill.`
+    );
+  }
+}
 function convertAndWrite(options2) {
   const sourceAdapter = getAdapter(options2.sourceFormat);
-  const pkg = sourceAdapter.parse(options2.files, {
+  const parsedPkg = options2.pkg ?? sourceAdapter.parse(options2.files, {
     subpathName: options2.subpathName,
     allowLoose: options2.allowLoose
+  });
+  const pkg = options2.selection ? filterPackage(parsedPkg, options2.selection) : parsedPkg;
+  const planned = options2.targetFormats.map((targetFormat) => {
+    const targetAdapter = getAdapter(targetFormat);
+    const emitted = targetAdapter.emit(rewritePackage(pkg, targetFormat), {
+      global: options2.global
+    });
+    assertUniqueOutputs(emitted, targetFormat);
+    return { targetFormat, emitted };
   });
   const combined = {
     created: 0,
     overwritten: 0,
+    unchanged: 0,
     skipped: 0,
     duplicate: 0,
     conflict: 0,
     actions: []
   };
   const seenPaths = /* @__PURE__ */ new Map();
-  for (const targetFormat of options2.targetFormats) {
-    const targetAdapter = getAdapter(targetFormat);
-    const rewrittenPkg = rewritePackage(pkg, targetFormat);
-    const emitted = targetAdapter.emit(rewrittenPkg, {
-      global: options2.global
-    });
-    const destination = options2.global ? targetAdapter.getGlobalDir() : options2.targetDir;
+  for (const { targetFormat, emitted } of planned) {
+    const destination = options2.global ? getAdapter(targetFormat).getGlobalDir() : options2.targetDir;
     const result = writeEmittedFiles(emitted, destination, {
       force: options2.force,
       dryRun: options2.dryRun,
@@ -4900,6 +5315,7 @@ function convertAndWrite(options2) {
     });
     combined.created += result.created;
     combined.overwritten += result.overwritten;
+    combined.unchanged += result.unchanged;
     combined.skipped += result.skipped;
     combined.duplicate += result.duplicate;
     combined.conflict += result.conflict;
@@ -5496,7 +5912,7 @@ var cac = (name = "") => new CAC(name);
 // package.json
 var package_default = {
   name: "uniskill",
-  version: "0.1.0",
+  version: "0.2.0",
   description: "Convert and install AI-agent skills between Cursor, Claude Code, OpenCode, and Codex CLI",
   author: "liferes",
   repository: {
@@ -5551,7 +5967,6 @@ var package_default = {
 };
 
 // src/cli/args.ts
-var VALID_FORMAT_SET = new Set(FORMAT_IDS);
 function parseTargetFormats(raw) {
   const tokens = raw.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean);
   if (tokens.length === 0) {
@@ -5567,12 +5982,13 @@ function parseTargetFormats(raw) {
       }
       continue;
     }
-    if (!VALID_FORMAT_SET.has(token)) {
+    const fmt = resolveFormatAlias(token);
+    if (!fmt) {
+      const suggestion = suggestFormat(token);
       throw new Error(
-        `Unsupported target format "${token}". Valid targets: ${FORMAT_IDS.join(", ")}, all.`
+        `Unsupported target format "${token}".${suggestion ? ` Did you mean "${suggestion}"?` : ""} Valid targets: ${FORMAT_IDS.join(", ")}, all.`
       );
     }
-    const fmt = token;
     if (!resolved.includes(fmt)) {
       resolved.push(fmt);
     }
@@ -5584,12 +6000,39 @@ function parseSourceFormat(raw) {
   if (value === "auto") {
     return "auto";
   }
-  if (!VALID_FORMAT_SET.has(value)) {
+  const resolved = resolveFormatAlias(value);
+  if (!resolved) {
+    const suggestion = suggestFormat(value);
     throw new Error(
-      `Unsupported source format "${value}". Valid formats: auto, ${FORMAT_IDS.join(", ")}.`
+      `Unsupported source format "${value}".${suggestion ? ` Did you mean "${suggestion}"?` : ""} Valid formats: auto, ${FORMAT_IDS.join(", ")}.`
     );
   }
-  return value;
+  return resolved;
+}
+function parseSkillSelection(raw) {
+  const entries = Array.isArray(raw) ? raw : [raw];
+  const seen = /* @__PURE__ */ new Set();
+  const resolved = [];
+  for (const entry of entries) {
+    if (typeof entry !== "string") {
+      continue;
+    }
+    for (const part of entry.split(",")) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      const lower = trimmed.toLowerCase();
+      if (!seen.has(lower)) {
+        seen.add(lower);
+        resolved.push(trimmed);
+      }
+    }
+  }
+  if (resolved.length === 0) {
+    throw new Error(
+      "Skill selection cannot be empty. Provide one or more comma-separated skill names."
+    );
+  }
+  return resolved;
 }
 function parseCliArgs(argv) {
   const cli = cac("uniskill");
@@ -5599,13 +6042,16 @@ function parseCliArgs(argv) {
   ).option(
     "-t, --to <targets>",
     "Target format(s): claude, opencode, codex, cursor, or all"
+  ).option(
+    "-s, --skill <names>",
+    "Only translate specific skill(s), comma-separated"
   ).option("-p, --path <dir>", "Destination project directory", {
     default: "."
   }).option(
     "-f, --from <format>",
     "Override source auto-detection (auto, cursor, claude, opencode, codex)",
     { default: "auto" }
-  ).option("-g, --global", "Install to user global agent config directory").option("-y, --yes", "Skip confirmation prompt").option("-d, --dry-run", "Preview planned actions without writing files").option("--force", "Overwrite existing files instead of skipping").example("uniskill").example("uniskill owner/repo -t claude").example("uniskill https://github.com/u/r -t opencode ./app -y").example("uniskill owner/repo/tree/main/skills/ui -t codex").example("uniskill owner/repo -t claude,opencode,codex").example("uniskill owner/repo -t opencode -g").example("uniskill owner/repo -t claude --dry-run");
+  ).option("-g, --global", "Install to user global agent config directory").option("-y, --yes", "Skip confirmation prompt").option("-d, --dry-run", "Preview planned actions without writing files").option("--force", "Overwrite existing files instead of skipping").example("uniskill").example("uniskill owner/repo -t claude").example("uniskill owner/repo -t claude -s react-hooks,api-design").example("uniskill https://github.com/u/r -t opencode ./app -y").example("uniskill owner/repo/tree/main/skills/ui -t codex").example("uniskill owner/repo -t claude,opencode,codex").example("uniskill owner/repo -t opencode -g").example("uniskill owner/repo -t claude --dry-run");
   cli.help();
   cli.version(package_default.version);
   const parsed = cli.parse(argv, { run: false });
@@ -5616,7 +6062,7 @@ function parseCliArgs(argv) {
   const sourceArg = parsed.args[0];
   const destArg = parsed.args[1];
   const hasActionFlags = Boolean(
-    opts.to || opts.global || opts.yes || opts.dryRun || opts.force || opts.from && opts.from !== "auto" || opts.path && opts.path !== "."
+    opts.to || opts.skill !== void 0 || opts.global || opts.yes || opts.dryRun || opts.force || opts.from && opts.from !== "auto" || opts.path && opts.path !== "."
   );
   if (!sourceArg && !hasActionFlags) {
     return { kind: "interactive" };
@@ -5630,12 +6076,14 @@ function parseCliArgs(argv) {
     typeof opts.from === "string" ? opts.from : void 0
   );
   const targets = typeof opts.to === "string" ? parseTargetFormats(opts.to) : void 0;
+  const skills = opts.skill !== void 0 ? parseSkillSelection(opts.skill) : void 0;
   const explicitPathFlag = argv.includes("-p") || argv.includes("--path") || argv.some((a) => a.startsWith("--path="));
   const targetDir = explicitPathFlag ? String(opts.path ?? ".") : destArg ?? String(opts.path ?? ".");
   return {
     kind: "command",
     source: sourceArg,
     targets,
+    ...skills ? { skills } : {},
     from,
     targetDir,
     global: Boolean(opts.global),
@@ -5664,32 +6112,46 @@ function formatActionLine(action, globalMode = false) {
       return `${prefix}${import_picocolors.default.green("\u2714 Created")} ${displayPath}`;
     case "overwritten":
       return `${prefix}${import_picocolors.default.green("\u2714 Overwrote")} ${displayPath}`;
+    case "unchanged":
+      return `${prefix}${import_picocolors.default.dim(`= Up to date ${displayPath}`)}`;
     case "skipped":
-      return `${prefix}${import_picocolors.default.yellow("\u26A0 Skipped")} ${displayPath} ${import_picocolors.default.dim("(already exists)")}`;
+      return `${prefix}${import_picocolors.default.yellow("\u26A0 Skipped")} ${displayPath} ${import_picocolors.default.dim("(differs on disk)")}`;
     case "duplicate":
       return `${prefix}${import_picocolors.default.dim(`\u2261 ${displayPath} (written once for both targets)`)}`;
     case "conflict":
       return `${prefix}${import_picocolors.default.yellow("\u26A0 Conflict")} ${displayPath} ${import_picocolors.default.dim("(second target wanted different content; first kept)")}`;
   }
 }
-function logWriteSummary(summary, options2 = {}) {
-  for (const action of summary.actions) {
-    console.log(formatActionLine(action, options2.global));
-  }
+function formatSummaryCounts(summary) {
   const parts = [];
-  if (summary.created > 0 || summary.overwritten === 0) {
+  if (summary.created > 0 || summary.overwritten === 0 && summary.unchanged === 0) {
     parts.push(`${summary.created} created`);
   }
   if (summary.overwritten > 0) {
     parts.push(`${summary.overwritten} overwritten`);
   }
-  parts.push(`${summary.skipped} skipped`);
+  if (summary.unchanged > 0) {
+    parts.push(`${summary.unchanged} up to date`);
+  }
+  if (summary.skipped > 0 || summary.unchanged === 0) {
+    parts.push(`${summary.skipped} skipped`);
+  }
+  if (summary.duplicate > 0) {
+    parts.push(`${summary.duplicate} shared`);
+  }
   if (summary.conflict > 0) {
     parts.push(`${summary.conflict} conflict${summary.conflict === 1 ? "" : "s"}`);
   }
-  const verb = options2.dryRun ? "Dry run complete!" : "Done!";
+  return parts.join(", ");
+}
+function logWriteSummary(summary, options2 = {}) {
+  for (const action of summary.actions) {
+    console.log(formatActionLine(action, options2.global));
+  }
+  const isAllUpToDate = !options2.dryRun && summary.created === 0 && summary.overwritten === 0 && summary.skipped === 0 && summary.conflict === 0 && summary.unchanged > 0;
+  const verb = options2.dryRun ? "Dry run complete!" : isAllUpToDate ? "Already up to date!" : "Done!";
   console.log("");
-  console.log(`${import_picocolors.default.bold(import_picocolors.default.green(verb))} ${parts.join(", ")}.`);
+  console.log(`${import_picocolors.default.bold(import_picocolors.default.green(verb))} ${formatSummaryCounts(summary)}.`);
   if (summary.conflict > 0) {
     logWarn(
       "Two target formats share a file name and produced different content. Install them one at a time with -t <format> if you need both."
@@ -6030,23 +6492,6 @@ var x = class {
     }
   }
 };
-var dD = class extends x {
-  get cursor() {
-    return this.value ? 0 : 1;
-  }
-  get _value() {
-    return this.cursor === 0;
-  }
-  constructor(u2) {
-    super(u2, false), this.value = !!u2.initialValue, this.on("value", () => {
-      this.value = this._value;
-    }), this.on("confirm", (t) => {
-      this.output.write(import_sisteransi.cursor.move(0, -1)), this.value = t, this.state = "submit", this.close();
-    }), this.on("cursor", () => {
-      this.value = !this.value;
-    });
-  }
-};
 var A;
 A = /* @__PURE__ */ new WeakMap();
 var kD = Object.defineProperty;
@@ -6201,25 +6646,6 @@ ${import_picocolors3.default.cyan(d2)}
 `;
   }
 } }).prompt();
-var ye = (t) => {
-  const n = t.active ?? "Yes", r = t.inactive ?? "No";
-  return new dD({ active: n, inactive: r, initialValue: t.initialValue ?? true, render() {
-    const i = `${import_picocolors3.default.gray(o)}
-${b2(this.state)}  ${t.message}
-`, s = this.value ? n : r;
-    switch (this.state) {
-      case "submit":
-        return `${i}${import_picocolors3.default.gray(o)}  ${import_picocolors3.default.dim(s)}`;
-      case "cancel":
-        return `${i}${import_picocolors3.default.gray(o)}  ${import_picocolors3.default.strikethrough(import_picocolors3.default.dim(s))}
-${import_picocolors3.default.gray(o)}`;
-      default:
-        return `${i}${import_picocolors3.default.cyan(o)}  ${this.value ? `${import_picocolors3.default.green(k2)} ${n}` : `${import_picocolors3.default.dim(P2)} ${import_picocolors3.default.dim(n)}`} ${import_picocolors3.default.dim("/")} ${this.value ? `${import_picocolors3.default.dim(P2)} ${import_picocolors3.default.dim(r)}` : `${import_picocolors3.default.green(k2)} ${r}`}
-${import_picocolors3.default.cyan(d2)}
-`;
-    }
-  } }).prompt();
-};
 var ve = (t) => {
   const n = (r, i) => {
     const s = r.label ?? String(r.value);
@@ -6291,6 +6717,21 @@ ${import_picocolors3.default.cyan(d2)}
 `;
     }
   } }).prompt();
+};
+var Me = (t = "", n = "") => {
+  const r = `
+${t}
+`.split(`
+`), i = S2(n).length, s = Math.max(r.reduce((a, l2) => {
+    const $2 = S2(l2);
+    return $2.length > a ? $2.length : a;
+  }, 0), i) + 2, c = r.map((a) => `${import_picocolors3.default.gray(o)}  ${import_picocolors3.default.dim(a)}${" ".repeat(s - S2(a).length)}${import_picocolors3.default.gray(o)}`).join(`
+`);
+  process.stdout.write(`${import_picocolors3.default.gray(o)}
+${import_picocolors3.default.green(C2)}  ${import_picocolors3.default.reset(n)} ${import_picocolors3.default.gray(_2.repeat(Math.max(s - i - 1, 1)) + me)}
+${c}
+${import_picocolors3.default.gray(de + _2.repeat(s + 2) + pe)}
+`);
 };
 var xe = (t = "") => {
   process.stdout.write(`${import_picocolors3.default.gray(d2)}  ${import_picocolors3.default.red(t)}
@@ -6388,6 +6829,53 @@ function assertNotCancelled(value) {
   }
   return value;
 }
+function truncateText(text, maxLen = 60) {
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= maxLen) {
+    return collapsed;
+  }
+  return `${collapsed.slice(0, maxLen - 3)}...`;
+}
+function formatDetectedHeader(sourceLabel, format) {
+  return `Detected ${sourceLabel} (${FORMAT_META[format].configDir})`;
+}
+function formatSelectionCounts(pkg) {
+  const parts = [];
+  if (pkg.skills.length > 0) {
+    parts.push(`${pkg.skills.length} skill${pkg.skills.length === 1 ? "" : "s"}`);
+  }
+  for (const rule of pkg.rootRules) {
+    parts.push(rule.sourceFilename);
+  }
+  if (pkg.sharedAssets.length > 0) {
+    parts.push(
+      `${pkg.sharedAssets.length} shared asset${pkg.sharedAssets.length === 1 ? "" : "s"}`
+    );
+  }
+  return parts.join(", ");
+}
+function formatPackageOverview(pkg, maxSkills = 12) {
+  const lines = [];
+  const visibleSkills = pkg.skills.slice(0, maxSkills);
+  for (const skill of visibleSkills) {
+    const desc = skill.description ? ` \u2014 ${truncateText(skill.description, 60)}` : "";
+    const assets = skill.assets.length > 0 ? ` [${skill.assets.length} asset${skill.assets.length === 1 ? "" : "s"}]` : "";
+    lines.push(`\u2022 ${skill.name}${desc}${assets}`);
+  }
+  if (pkg.skills.length > maxSkills) {
+    const extra = pkg.skills.length - maxSkills;
+    lines.push(`... and ${extra} more skill${extra === 1 ? "" : "s"}`);
+  }
+  for (const rule of pkg.rootRules) {
+    lines.push(`\u2022 ${rule.sourceFilename} (root rule)`);
+  }
+  if (pkg.sharedAssets.length > 0) {
+    lines.push(
+      `\u2022 Shared config assets (${pkg.sharedAssets.length} file${pkg.sharedAssets.length === 1 ? "" : "s"})`
+    );
+  }
+  return lines.join("\n");
+}
 async function promptSourceFormatSelection(detections) {
   const selected = assertNotCancelled(
     await ve({
@@ -6404,69 +6892,339 @@ async function promptSourceFormatSelection(detections) {
   }
   return match;
 }
-async function promptTargetFormatSelection() {
+async function promptTranslationScope(pkg) {
+  const counts = formatSelectionCounts(pkg);
+  const scope = assertNotCancelled(
+    await ve({
+      message: "What would you like to translate?",
+      options: [
+        {
+          value: "all",
+          label: "Translate all",
+          hint: counts || void 0
+        },
+        {
+          value: "selected",
+          label: "Translate selected",
+          hint: "pick specific skills & rules"
+        },
+        {
+          value: "cancel",
+          label: "Cancel"
+        }
+      ]
+    })
+  );
+  if (scope === "cancel") {
+    return null;
+  }
+  if (scope === "all") {
+    return {
+      includeRootRules: true,
+      includeSharedAssets: true
+    };
+  }
+  const options2 = [];
+  for (const skill of pkg.skills) {
+    const hintParts = [];
+    if (skill.description) {
+      hintParts.push(truncateText(skill.description, 48));
+    }
+    if (skill.assets.length > 0) {
+      hintParts.push(
+        `${skill.assets.length} asset${skill.assets.length === 1 ? "" : "s"}`
+      );
+    }
+    options2.push({
+      value: `skill:${skill.name}`,
+      label: skill.name,
+      ...hintParts.length > 0 ? { hint: hintParts.join(" \xB7 ") } : {}
+    });
+  }
+  if (pkg.rootRules.length > 0) {
+    options2.push({
+      value: "__root_rules__",
+      label: `${pkg.rootRules.map((r) => r.sourceFilename).join(", ")} (root rule)`,
+      hint: "root instruction file"
+    });
+  }
+  if (pkg.sharedAssets.length > 0) {
+    const sample = pkg.sharedAssets.slice(0, 2).map((a) => a.relativePath).join(", ");
+    options2.push({
+      value: "__shared_assets__",
+      label: `Shared config assets (${pkg.sharedAssets.length} file${pkg.sharedAssets.length === 1 ? "" : "s"})`,
+      hint: pkg.sharedAssets.length > 2 ? `${sample}, ...` : sample
+    });
+  }
+  const picked = assertNotCancelled(
+    await fe({
+      message: "Select skills and rules to translate:",
+      options: options2,
+      required: true
+    })
+  );
+  const pickedSet = new Set(picked);
+  const skillNames = picked.filter((value) => value.startsWith("skill:")).map((value) => value.slice("skill:".length));
+  return {
+    skillNames,
+    includeRootRules: pickedSet.has("__root_rules__"),
+    includeSharedAssets: pickedSet.has("__shared_assets__")
+  };
+}
+async function promptTargetFormatSelection(sourceFormat, detectedTargets) {
+  const otherFormats = sourceFormat ? FORMAT_IDS.filter((id) => id !== sourceFormat) : [...FORMAT_IDS];
+  const detectedSet = new Set(detectedTargets ?? []);
+  const formatHints = (id) => {
+    const parts = [];
+    if (id === sourceFormat) {
+      parts.push("detected source");
+    }
+    if (detectedSet.has(id)) {
+      parts.push("detected");
+    }
+    return parts.length > 0 ? parts.join(" \xB7 ") : void 0;
+  };
+  const options2 = sourceFormat ? [
+    {
+      value: "all_other",
+      label: "All other formats",
+      hint: otherFormats.map((id) => FORMAT_META[id].configDir).join(", ")
+    },
+    {
+      value: "all",
+      label: "All formats",
+      hint: FORMAT_IDS.map((id) => FORMAT_META[id].configDir).join(", ")
+    },
+    ...FORMAT_IDS.map((id) => {
+      const hint = formatHints(id);
+      return {
+        value: id,
+        label: FORMAT_META[id].label,
+        ...hint ? { hint } : {}
+      };
+    })
+  ] : [
+    { value: "all", label: "All supported formats" },
+    ...FORMAT_IDS.map((id) => {
+      const hint = formatHints(id);
+      return {
+        value: id,
+        label: FORMAT_META[id].label,
+        ...hint ? { hint } : {}
+      };
+    })
+  ];
   const selected = assertNotCancelled(
     await fe({
       message: "Select target format(s) to generate:",
-      options: [
-        { value: "all", label: "All supported formats" },
-        ...FORMAT_IDS.map((id) => ({
-          value: id,
-          label: FORMAT_META[id].label
-        }))
-      ],
+      options: options2,
+      ...detectedTargets && detectedTargets.length > 0 ? { initialValues: detectedTargets } : {},
       required: true
     })
   );
   if (selected.includes("all")) {
     return [...FORMAT_IDS];
   }
-  return selected;
+  const chosen = /* @__PURE__ */ new Set();
+  if (selected.includes("all_other")) {
+    for (const id of otherFormats) {
+      chosen.add(id);
+    }
+  }
+  for (const id of FORMAT_IDS) {
+    if (selected.includes(id)) {
+      chosen.add(id);
+    }
+  }
+  return FORMAT_IDS.filter((id) => chosen.has(id));
 }
-async function promptConfirmation(sourceLabel, targetFormats, destinationLabel) {
-  const targetNames = targetFormats.map((id) => FORMAT_META[id].label.split(" ")[0]).join(", ");
+async function promptWriteAction(options2) {
+  const targetNames = options2.targetFormats.map((id) => FORMAT_META[id].label.split(" ")[0]).join(", ");
+  const message = options2.alreadyPreviewed ? "Proceed with writing these files?" : `Translate [${options2.sourceLabel}] \u2794 [${targetNames}] into ${options2.destinationLabel} (${options2.selectionSummary})?`;
+  const preview = options2.preview;
+  let writeOption;
+  let forceOption;
+  if (preview) {
+    if (preview.skipped > 0) {
+      writeOption = {
+        value: "write",
+        label: preview.created > 0 ? "Write new & keep existing" : "Keep existing files",
+        hint: `${preview.created} new, skip ${preview.skipped} changed${preview.unchanged > 0 ? `, ${preview.unchanged} up to date` : ""}`
+      };
+      forceOption = {
+        value: "force",
+        label: `Update ${preview.skipped} changed file${preview.skipped === 1 ? "" : "s"}`,
+        hint: preview.created > 0 ? `+ ${preview.created} new` : "overwrite differing files"
+      };
+    } else {
+      writeOption = {
+        value: "write",
+        label: "Translate & write files",
+        hint: preview.unchanged > 0 ? `${preview.created} new, ${preview.unchanged} up to date` : `${preview.created} new file${preview.created === 1 ? "" : "s"}`
+      };
+    }
+  } else {
+    writeOption = {
+      value: "write",
+      label: "Translate & write files",
+      hint: "skip existing files"
+    };
+    forceOption = {
+      value: "force",
+      label: "Translate & overwrite existing",
+      hint: "--force"
+    };
+  }
+  const dryRunOption = {
+    value: "dry_run",
+    label: "Preview plan (dry-run)",
+    hint: "inspect files without writing"
+  };
+  const changeTargetOption = {
+    value: "change_target",
+    label: "Change target format"
+  };
+  const cancelOption = {
+    value: "cancel",
+    label: "Cancel"
+  };
+  const orderedOptions = options2.defaultForce && forceOption ? [
+    forceOption,
+    writeOption,
+    ...options2.alreadyPreviewed ? [] : [dryRunOption],
+    ...options2.allowChangeTarget ? [changeTargetOption] : [],
+    cancelOption
+  ] : [
+    writeOption,
+    ...options2.alreadyPreviewed ? [] : [dryRunOption],
+    ...forceOption ? [forceOption] : [],
+    ...options2.allowChangeTarget ? [changeTargetOption] : [],
+    cancelOption
+  ];
   return assertNotCancelled(
-    await ye({
-      message: `Convert [${sourceLabel}] \u2794 [${targetNames}] into ${destinationLabel}?`,
-      initialValue: true
+    await ve({
+      message,
+      options: orderedOptions
     })
   );
 }
 async function runInteractiveWizard() {
   Ie(import_picocolors4.default.bgCyan(import_picocolors4.default.black(" uniskill ")));
-  const sourceInput = assertNotCancelled(
-    await he({
-      message: "GitHub repository URL, owner/repo, or local folder:",
-      placeholder: "owner/repo or https://github.com/owner/repo",
-      validate(value) {
-        if (!value || !value.trim()) {
-          return "Please enter a GitHub repo or local path.";
-        }
-        try {
-          parseGitHubSource(value);
-          return void 0;
-        } catch (err) {
-          return err instanceof Error ? err.message : String(err);
-        }
-      }
-    })
-  );
-  const spin = Y2();
-  spin.start(`Fetching ${sourceInput.trim()}...`);
   let fetchResult;
   let detections;
-  try {
-    const res = await fetchAndDetect(sourceInput.trim(), "auto");
-    fetchResult = res.fetchResult;
-    detections = res.detections;
-    spin.stop(`Detected: ${detections.map((d3) => d3.summary).join(" | ")}`);
-  } catch (err) {
-    spin.stop("Fetch failed");
-    M2.error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
+  let usingCurrentDir = false;
+  const localSource = detectLocalProjectSource(process.cwd());
+  if (localSource) {
+    const detectedSummary = localSource.detections.map((d3) => d3.summary).join(" \xB7 ");
+    const sourceChoice = assertNotCancelled(
+      await ve({
+        message: "Detected skills in this project. What would you like to do?",
+        options: [
+          {
+            value: "local",
+            label: "Convert this project",
+            hint: detectedSummary
+          },
+          {
+            value: "remote",
+            label: "Import from a GitHub repo or another folder"
+          }
+        ]
+      })
+    );
+    if (sourceChoice === "local") {
+      fetchResult = localSource.fetchResult;
+      detections = localSource.detections;
+      usingCurrentDir = true;
+      if (detections.length === 1) {
+        M2.step(
+          formatDetectedHeader(
+            fetchResult.source.displayLabel,
+            detections[0].format
+          )
+        );
+      }
+    }
   }
-  const chosenDetection = detections.length === 1 ? detections[0] : await promptSourceFormatSelection(detections);
-  const targetFormats = await promptTargetFormatSelection();
+  if (!usingCurrentDir) {
+    const sourceInput = assertNotCancelled(
+      await he({
+        message: "GitHub repository URL, owner/repo, or local folder:",
+        placeholder: "owner/repo or https://github.com/owner/repo",
+        validate(value) {
+          if (!value || !value.trim()) {
+            return "Please enter a GitHub repo or local path.";
+          }
+          try {
+            parseGitHubSource(value);
+            return void 0;
+          } catch (err) {
+            return err instanceof Error ? err.message : String(err);
+          }
+        }
+      })
+    );
+    const spin = Y2();
+    spin.start(`Fetching ${sourceInput.trim()}...`);
+    try {
+      const res = await fetchAndDetect(sourceInput.trim(), "auto");
+      fetchResult = res.fetchResult;
+      detections = res.detections;
+      if (detections.length === 1) {
+        spin.stop(
+          formatDetectedHeader(
+            fetchResult.source.displayLabel,
+            detections[0].format
+          )
+        );
+      } else {
+        spin.stop(
+          `Detected ${detections.length} formats in ${fetchResult.source.displayLabel}`
+        );
+      }
+    } catch (err) {
+      spin.stop("Fetch failed");
+      M2.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  }
+  let chosenDetection = detections[0];
+  if (detections.length > 1) {
+    chosenDetection = await promptSourceFormatSelection(detections);
+    M2.step(
+      formatDetectedHeader(
+        fetchResult.source.displayLabel,
+        chosenDetection.format
+      )
+    );
+  }
+  const pkg = parseDetectedPackage(
+    fetchResult.files,
+    chosenDetection,
+    fetchResult.subpathName
+  );
+  Me(
+    formatPackageOverview(pkg),
+    `${fetchResult.source.displayLabel} \xB7 ${FORMAT_META[chosenDetection.format].label}`
+  );
+  let filteredPkg = pkg;
+  if (shouldPromptTranslationScope(pkg)) {
+    const selection = await promptTranslationScope(pkg);
+    if (!selection) {
+      xe("Aborted. No files were written.");
+      return;
+    }
+    filteredPkg = filterPackage(pkg, selection);
+  }
+  const detectedTargets = detectTargetFormats({
+    targetDir: process.cwd(),
+    sourceFormat: chosenDetection.format,
+    excludeSourceWhenLocal: usingCurrentDir
+  });
+  let targetFormats = await promptTargetFormatSelection(
+    chosenDetection.format,
+    detectedTargets.formats
+  );
   const destinationMode = assertNotCancelled(
     await ve({
       message: "Where should the converted skills be installed?",
@@ -6493,32 +7251,79 @@ async function runInteractiveWizard() {
       })
     );
   }
-  const destinationLabel = isGlobal ? targetFormats.map((id) => getAdapter(id).getGlobalDir()).join(", ") : targetDir;
+  let destinationLabel = isGlobal ? targetFormats.map((id) => getAdapter(id).getGlobalDir()).join(", ") : targetDir;
   const sourceName = FORMAT_META[chosenDetection.format].label.split(" ")[0];
-  const confirmed = await promptConfirmation(
-    sourceName,
-    targetFormats,
-    destinationLabel
-  );
-  if (!confirmed) {
+  const selectionSummary = formatSelectionCounts(filteredPkg);
+  let alreadyPreviewed = false;
+  let actionChoice = "cancel";
+  while (true) {
+    const { summary: preview } = convertAndWrite({
+      files: fetchResult.files,
+      pkg: filteredPkg,
+      sourceFormat: chosenDetection.format,
+      targetFormats,
+      targetDir,
+      global: isGlobal,
+      dryRun: true,
+      subpathName: fetchResult.subpathName,
+      allowLoose: chosenDetection.allowLoose
+    });
+    if (preview.created === 0 && preview.skipped === 0 && preview.conflict === 0 && preview.unchanged > 0) {
+      Se(`${import_picocolors4.default.green("Already up to date!")} ${formatSummaryCounts(preview)}.`);
+      return;
+    }
+    actionChoice = await promptWriteAction({
+      sourceLabel: sourceName,
+      targetFormats,
+      destinationLabel,
+      selectionSummary,
+      alreadyPreviewed,
+      preview,
+      allowChangeTarget: true
+    });
+    if (actionChoice === "dry_run") {
+      for (const action of preview.actions) {
+        console.log(formatActionLine(action, isGlobal));
+      }
+      M2.info(`Dry run: ${formatSummaryCounts(preview)}.`);
+      alreadyPreviewed = true;
+      continue;
+    }
+    if (actionChoice === "change_target") {
+      targetFormats = await promptTargetFormatSelection(
+        chosenDetection.format,
+        targetFormats
+      );
+      destinationLabel = isGlobal ? targetFormats.map((id) => getAdapter(id).getGlobalDir()).join(", ") : targetDir;
+      alreadyPreviewed = false;
+      continue;
+    }
+    break;
+  }
+  if (actionChoice === "cancel") {
     xe("Aborted. No files were written.");
     return;
   }
   const { summary } = convertAndWrite({
     files: fetchResult.files,
+    pkg: filteredPkg,
     sourceFormat: chosenDetection.format,
     targetFormats,
     targetDir,
     global: isGlobal,
+    force: actionChoice === "force",
     subpathName: fetchResult.subpathName,
     allowLoose: chosenDetection.allowLoose
   });
   for (const action of summary.actions) {
     console.log(formatActionLine(action, isGlobal));
   }
-  Se(
-    `${import_picocolors4.default.green("Done!")} ${summary.created} created, ${summary.skipped} skipped.`
-  );
+  if (summary.conflict > 0) {
+    M2.warn(
+      "Two target formats share a file name and produced different content. Install them one at a time if you need both."
+    );
+  }
+  Se(`${import_picocolors4.default.green("Done!")} ${formatSummaryCounts(summary)}.`);
 }
 
 // src/index.ts
@@ -6535,47 +7340,154 @@ async function main() {
     parsed.source,
     parsed.from
   );
-  for (const d3 of detections) {
-    logInfo(`Detected: ${d3.summary}`);
-  }
   let chosenDetection = detections[0];
   if (detections.length > 1) {
-    if (!process.stdin.isTTY) {
-      throw new Error(
-        `Multiple formats detected (${detections.map((d3) => d3.format).join(", ")}). Specify one with --from <format>.`
-      );
+    for (const d3 of detections) {
+      logInfo(`Detected: ${d3.summary}`);
     }
-    chosenDetection = await promptSourceFormatSelection(detections);
-  }
-  let targetFormats = parsed.targets;
-  if (!targetFormats) {
     if (!process.stdin.isTTY) {
-      throw new Error(
-        "Missing target format. Specify -t, --to <claude|opencode|codex|cursor|all>."
+      const sharedRootOnly = detections.every(
+        (d3) => d3.skillCount === 0 && d3.matchedPaths.length > 0 && d3.matchedPaths.every((p2) => p2 === "AGENTS.md")
       );
+      if (!sharedRootOnly) {
+        throw new Error(
+          `Multiple formats detected (${detections.map((d3) => d3.format).join(", ")}). Specify one with --from <format>.`
+        );
+      }
+      logInfo(
+        `AGENTS.md is shared by OpenCode and Codex; reading it as ${FORMAT_META[detections[0].format].label}.`
+      );
+    } else {
+      chosenDetection = await promptSourceFormatSelection(detections);
     }
-    targetFormats = await promptTargetFormatSelection();
   }
-  const destinationLabel = parsed.global ? targetFormats.map((id) => getAdapter(id).getGlobalDir()).join(", ") : parsed.targetDir;
-  if (!parsed.yes && !parsed.dryRun && process.stdin.isTTY) {
-    const sourceName = FORMAT_META[chosenDetection.format].label.split(" ")[0];
-    const ok = await promptConfirmation(
-      sourceName,
-      targetFormats,
-      destinationLabel
-    );
-    if (!ok) {
+  const pkg = parseDetectedPackage(
+    fetchResult.files,
+    chosenDetection,
+    fetchResult.subpathName
+  );
+  logInfo(
+    `${formatDetectedHeader(fetchResult.source.displayLabel, chosenDetection.format)} \u2014 ${formatSelectionCounts(pkg)}`
+  );
+  let selection;
+  if (parsed.skills) {
+    selection = {
+      skillNames: parsed.skills,
+      includeRootRules: false,
+      includeSharedAssets: false
+    };
+  } else if (!parsed.yes && !parsed.dryRun && process.stdin.isTTY && shouldPromptTranslationScope(pkg)) {
+    const overview = formatPackageOverview(pkg);
+    if (overview) {
+      console.log(overview);
+    }
+    const pickedScope = await promptTranslationScope(pkg);
+    if (!pickedScope) {
       logInfo(import_picocolors5.default.dim("Aborted. No files were written."));
       return;
     }
+    selection = pickedScope;
+  }
+  const filteredPkg = selection ? filterPackage(pkg, selection) : pkg;
+  let targetFormats = parsed.targets;
+  let wasAutoDetected = false;
+  if (!targetFormats) {
+    const excludeSourceWhenLocal = fetchResult.source.type === "local" && !parsed.global && path8.resolve(fetchResult.source.localPath) === path8.resolve(parsed.targetDir);
+    const detected = detectTargetFormats({
+      targetDir: parsed.targetDir,
+      global: parsed.global,
+      sourceFormat: chosenDetection.format,
+      excludeSourceWhenLocal
+    });
+    if (detected.formats.length > 0) {
+      logInfo(
+        `Auto-detected target${detected.formats.length === 1 ? "" : "s"} (${detected.scope === "project" ? "from project" : "installed on this machine"}): ${detected.formats.map((id) => FORMAT_META[id].label).join(", ")}`
+      );
+      if (!process.stdin.isTTY || parsed.yes || parsed.dryRun || detected.formats.length === 1) {
+        targetFormats = detected.formats;
+        wasAutoDetected = true;
+      } else {
+        targetFormats = await promptTargetFormatSelection(
+          chosenDetection.format,
+          detected.formats
+        );
+      }
+    } else {
+      if (!process.stdin.isTTY) {
+        throw new Error(
+          "Could not auto-detect any target format. Specify -t, --to <claude|opencode|codex|cursor|all>."
+        );
+      }
+      targetFormats = await promptTargetFormatSelection(chosenDetection.format);
+    }
+  }
+  let destinationLabel = parsed.global ? targetFormats.map((id) => getAdapter(id).getGlobalDir()).join(", ") : parsed.targetDir;
+  let effectiveForce = parsed.force;
+  if (!parsed.yes && !parsed.dryRun && process.stdin.isTTY) {
+    const sourceName = FORMAT_META[chosenDetection.format].label.split(" ")[0];
+    const selectionSummary = formatSelectionCounts(filteredPkg);
+    let alreadyPreviewed = false;
+    let actionChoice = "cancel";
+    while (true) {
+      const { summary: preview } = convertAndWrite({
+        files: fetchResult.files,
+        pkg: filteredPkg,
+        sourceFormat: chosenDetection.format,
+        targetFormats,
+        targetDir: parsed.targetDir,
+        global: parsed.global,
+        force: parsed.force,
+        dryRun: true,
+        subpathName: fetchResult.subpathName,
+        allowLoose: chosenDetection.allowLoose
+      });
+      if (preview.created === 0 && preview.skipped === 0 && preview.conflict === 0 && preview.unchanged > 0) {
+        logInfo(`Already up to date! ${formatSummaryCounts(preview)}.`);
+        return;
+      }
+      actionChoice = await promptWriteAction({
+        sourceLabel: sourceName,
+        targetFormats,
+        destinationLabel,
+        selectionSummary,
+        alreadyPreviewed,
+        defaultForce: parsed.force,
+        preview,
+        allowChangeTarget: wasAutoDetected
+      });
+      if (actionChoice === "dry_run") {
+        for (const action of preview.actions) {
+          console.log(formatActionLine(action, parsed.global));
+        }
+        logInfo(`Dry run: ${formatSummaryCounts(preview)}.`);
+        alreadyPreviewed = true;
+        continue;
+      }
+      if (actionChoice === "change_target") {
+        targetFormats = await promptTargetFormatSelection(
+          chosenDetection.format,
+          targetFormats
+        );
+        destinationLabel = parsed.global ? targetFormats.map((id) => getAdapter(id).getGlobalDir()).join(", ") : parsed.targetDir;
+        alreadyPreviewed = false;
+        continue;
+      }
+      break;
+    }
+    if (actionChoice === "cancel") {
+      logInfo(import_picocolors5.default.dim("Aborted. No files were written."));
+      return;
+    }
+    effectiveForce = actionChoice === "force";
   }
   const { summary } = convertAndWrite({
     files: fetchResult.files,
+    pkg: filteredPkg,
     sourceFormat: chosenDetection.format,
     targetFormats,
     targetDir: parsed.targetDir,
     global: parsed.global,
-    force: parsed.force,
+    force: effectiveForce,
     dryRun: parsed.dryRun,
     subpathName: fetchResult.subpathName,
     allowLoose: chosenDetection.allowLoose

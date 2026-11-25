@@ -82,7 +82,8 @@ export function detectFormats(
     });
   }
 
-  // Fallback: loose detection for monorepo subpaths pointing directly to a skill folder
+  // Fallback: loose detection when the config dir is gone, as with a subpath
+  // fetch or a repo that keeps skills in a plain `skills/` folder.
   const looseResults: DetectionResult[] = [];
   for (const candidate of [claudeAdapter, cursorAdapter]) {
     const detected = candidate.detect(files, { ...options, allowLoose: true });

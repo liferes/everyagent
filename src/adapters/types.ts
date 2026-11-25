@@ -81,7 +81,9 @@ export function serializeMarkdownWithFrontmatter(
     return Buffer.from(withTrailingNewline, 'utf8');
   }
 
-  const output = matter.stringify(withTrailingNewline, cleanData);
+  // An object carries the body through untouched; a bare string gets parsed
+  // as frontmatter again when it starts with `---`, which mangles the data.
+  const output = matter.stringify({ content: withTrailingNewline }, cleanData);
   const ensured = output.endsWith('\n') ? output : `${output}\n`;
   return Buffer.from(ensured, 'utf8');
 }
@@ -148,7 +150,9 @@ export function detectSkillMdFormat(
   ) {
     for (const file of files) {
       const p = normalizePosixPath(file.path);
-      if (p === 'SKILL.md' || /^[^/]+\/SKILL\.md$/.test(p)) {
+      // Any SKILL.md at any depth: repo roots carry them under `skills/<name>/`
+      // (or deeper), and a subpath fetch strips the config dir entirely.
+      if (p === 'SKILL.md' || p.endsWith('/SKILL.md')) {
         skillPaths.push(p);
         allowLoose = true;
       }
@@ -217,36 +221,40 @@ export function parseSkillMdFormat(
     }
   }
 
-  // Fallback for subpath fetches: the `.claude/skills/` prefix is gone, so a
-  // bare SKILL.md is a skill and its folder name is the skill name.
+  // Fallback for subpath fetches and repo-wide layouts (`skills/<name>/`): the
+  // `.claude/skills/` prefix is gone, so any SKILL.md is an entry point and its
+  // folder is the skill.
   if (options?.allowLoose && skillRoots.length === 0) {
     for (const file of files) {
       const p = normalizePosixPath(file.path);
-      if (p === 'SKILL.md') {
-        const parsed = parseMarkdownWithFrontmatter(file.content.toString('utf8'));
-        const inferred =
-          (typeof parsed.data.name === 'string' && parsed.data.name.trim()) ||
-          options.subpathName ||
-          'skill';
-        skillRoots.push({
-          skillName: sanitizeSkillName(inferred),
-          rootDir: '',
-          file,
-        });
-      } else if (/^[^/]+\/SKILL\.md$/.test(p)) {
-        const skillDir = p.slice(0, -'/SKILL.md'.length);
-        skillRoots.push({
-          skillName: sanitizeSkillName(skillDir),
-          rootDir: `${skillDir}/`,
-          file,
-        });
+      if (p !== 'SKILL.md' && !p.endsWith('/SKILL.md')) {
+        continue;
       }
+      const dir = p === 'SKILL.md' ? '' : p.slice(0, -'SKILL.md'.length);
+      const folder = dir ? (dir.slice(0, -1).split('/').pop() ?? '') : '';
+      skillRoots.push({
+        skillName: folder ? sanitizeSkillName(folder) : '',
+        rootDir: dir,
+        file,
+      });
     }
   }
 
+  const entryPaths = new Set(
+    skillRoots.map((sr) => normalizePosixPath(sr.file.path)),
+  );
+
   for (const entry of skillRoots) {
     const raw = entry.file.content.toString('utf8');
-    const { data, body } = parseMarkdownWithFrontmatter(raw);
+    let parsed: ParsedMarkdown;
+    try {
+      parsed = parseMarkdownWithFrontmatter(raw);
+    } catch (err) {
+      throw new Error(
+        `Could not parse frontmatter in "${entry.file.path}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    const { data, body } = parsed;
     const {
       name,
       description,
@@ -259,7 +267,9 @@ export function parseSkillMdFormat(
     const skillName =
       typeof name === 'string' && name.trim()
         ? sanitizeSkillName(name.trim())
-        : sanitizeSkillName(entry.skillName);
+        : sanitizeSkillName(
+            entry.skillName || options?.subpathName || 'skill',
+          );
 
     let allowedTools: string | string[] | undefined;
     if (typeof allowedToolsRaw === 'string' && allowedToolsRaw.trim()) {
@@ -293,43 +303,44 @@ export function parseSkillMdFormat(
     }
 
     // Already consumed as a skill entry point.
-    const matchedRoot = skillRoots.find((sr) => normalizePosixPath(sr.file.path) === p);
-    if (matchedRoot) {
+    if (entryPaths.has(p)) {
       continue;
     }
 
-    // Everything under a skill's own folder belongs to that skill.
-    let attachedToSkill = false;
+    // Everything under a skill's own folder belongs to that skill. Nested
+    // skills exist (`skills/a/b/SKILL.md`), so the deepest folder wins.
+    let owner: (typeof skillRoots)[number] | undefined;
     for (const sr of skillRoots) {
-      if (sr.rootDir && p.startsWith(sr.rootDir)) {
-        const rel = p.slice(sr.rootDir.length);
-        const skill = skillsMap.get(sr.rootDir);
-        if (skill && rel) {
-          skill.assets.push({
-            relativePath: rel,
-            content: file.content,
-            isText: isTextFile(p, file.content),
-          });
-          attachedToSkill = true;
-          break;
-        }
-      } else if (!sr.rootDir && !p.startsWith(configPrefix)) {
-        // Loose root SKILL.md: the whole subpath is the skill, so its
-        // companion files are assets.
-        const skill = skillsMap.get('__ROOT__');
-        if (skill) {
-          skill.assets.push({
-            relativePath: p,
-            content: file.content,
-            isText: isTextFile(p, file.content),
-          });
-          attachedToSkill = true;
-          break;
-        }
+      if (!sr.rootDir || !p.startsWith(sr.rootDir)) continue;
+      if (!owner || sr.rootDir.length > owner.rootDir.length) {
+        owner = sr;
       }
     }
-    if (attachedToSkill) {
-      continue;
+    if (owner) {
+      const rel = p.slice(owner.rootDir.length);
+      const skill = skillsMap.get(owner.rootDir);
+      if (skill && rel) {
+        skill.assets.push({
+          relativePath: rel,
+          content: file.content,
+          isText: isTextFile(p, file.content),
+        });
+        continue;
+      }
+    }
+
+    // Loose root SKILL.md: the whole subpath is the skill, so its companion
+    // files are assets.
+    if (skillRoots.some((sr) => !sr.rootDir) && !p.startsWith(configPrefix)) {
+      const skill = skillsMap.get('__ROOT__');
+      if (skill) {
+        skill.assets.push({
+          relativePath: p,
+          content: file.content,
+          isText: isTextFile(p, file.content),
+        });
+        continue;
+      }
     }
 
     if (p.startsWith(configPrefix)) {

@@ -1,5 +1,6 @@
 import { cac } from 'cac';
 import pkg from '../../package.json' with { type: 'json' };
+import { resolveFormatAlias, suggestFormat } from '../core/fuzzy.js';
 import { FORMAT_IDS, type FormatId } from '../core/ir.js';
 
 export type CliParseResult =
@@ -9,17 +10,15 @@ export type CliParseResult =
       kind: 'command';
       source: string;
       targets?: FormatId[];
+      skills?: string[];
       from: FormatId | 'auto';
       targetDir: string;
       global: boolean;
       yes: boolean;
       dryRun: boolean;
       force: boolean;
-    };
+    }
 
-const VALID_FORMAT_SET = new Set<string>(FORMAT_IDS);
-
-/** `all` expands in place; repeats collapse. */
 export function parseTargetFormats(raw: string): FormatId[] {
   const tokens = raw
     .split(',')
@@ -41,13 +40,14 @@ export function parseTargetFormats(raw: string): FormatId[] {
       continue;
     }
 
-    if (!VALID_FORMAT_SET.has(token)) {
+    const fmt = resolveFormatAlias(token);
+    if (!fmt) {
+      const suggestion = suggestFormat(token);
       throw new Error(
-        `Unsupported target format "${token}". Valid targets: ${FORMAT_IDS.join(', ')}, all.`,
+        `Unsupported target format "${token}".${suggestion ? ` Did you mean "${suggestion}"?` : ''} Valid targets: ${FORMAT_IDS.join(', ')}, all.`,
       );
     }
 
-    const fmt = token as FormatId;
     if (!resolved.includes(fmt)) {
       resolved.push(fmt);
     }
@@ -62,12 +62,44 @@ export function parseSourceFormat(raw?: string): FormatId | 'auto' {
   if (value === 'auto') {
     return 'auto';
   }
-  if (!VALID_FORMAT_SET.has(value)) {
+  const resolved = resolveFormatAlias(value);
+  if (!resolved) {
+    const suggestion = suggestFormat(value);
     throw new Error(
-      `Unsupported source format "${value}". Valid formats: auto, ${FORMAT_IDS.join(', ')}.`,
+      `Unsupported source format "${value}".${suggestion ? ` Did you mean "${suggestion}"?` : ''} Valid formats: auto, ${FORMAT_IDS.join(', ')}.`,
     );
   }
-  return value as FormatId;
+  return resolved;
+}
+
+/** Parse `-s, --skill` values (comma-separated and/or repeated), deduplicating case-insensitively. */
+export function parseSkillSelection(raw: unknown): string[] {
+  const entries = Array.isArray(raw) ? raw : [raw];
+  const seen = new Set<string>();
+  const resolved: string[] = [];
+
+  for (const entry of entries) {
+    if (typeof entry !== 'string') {
+      continue;
+    }
+    for (const part of entry.split(',')) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      const lower = trimmed.toLowerCase();
+      if (!seen.has(lower)) {
+        seen.add(lower);
+        resolved.push(trimmed);
+      }
+    }
+  }
+
+  if (resolved.length === 0) {
+    throw new Error(
+      'Skill selection cannot be empty. Provide one or more comma-separated skill names.',
+    );
+  }
+
+  return resolved;
 }
 
 export function parseCliArgs(argv: string[]): CliParseResult {
@@ -81,6 +113,10 @@ export function parseCliArgs(argv: string[]): CliParseResult {
     .option(
       '-t, --to <targets>',
       'Target format(s): claude, opencode, codex, cursor, or all',
+    )
+    .option(
+      '-s, --skill <names>',
+      'Only translate specific skill(s), comma-separated',
     )
     .option('-p, --path <dir>', 'Destination project directory', {
       default: '.',
@@ -96,6 +132,7 @@ export function parseCliArgs(argv: string[]): CliParseResult {
     .option('--force', 'Overwrite existing files instead of skipping')
     .example('uniskill')
     .example('uniskill owner/repo -t claude')
+    .example('uniskill owner/repo -t claude -s react-hooks,api-design')
     .example('uniskill https://github.com/u/r -t opencode ./app -y')
     .example('uniskill owner/repo/tree/main/skills/ui -t codex')
     .example('uniskill owner/repo -t claude,opencode,codex')
@@ -117,6 +154,7 @@ export function parseCliArgs(argv: string[]): CliParseResult {
 
   const hasActionFlags = Boolean(
     opts.to ||
+      opts.skill !== undefined ||
       opts.global ||
       opts.yes ||
       opts.dryRun ||
@@ -140,6 +178,8 @@ export function parseCliArgs(argv: string[]): CliParseResult {
   );
   const targets =
     typeof opts.to === 'string' ? parseTargetFormats(opts.to) : undefined;
+  const skills =
+    opts.skill !== undefined ? parseSkillSelection(opts.skill) : undefined;
 
   const explicitPathFlag =
     argv.includes('-p') ||
@@ -154,6 +194,7 @@ export function parseCliArgs(argv: string[]): CliParseResult {
     kind: 'command',
     source: sourceArg,
     targets,
+    ...(skills ? { skills } : {}),
     from,
     targetDir,
     global: Boolean(opts.global),

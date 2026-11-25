@@ -371,7 +371,8 @@ describe('Gate 3: Conflict Safety (Skip-Existing Default & --force)', () => {
     });
     expect(run2.summary.created).toBe(0);
     expect(run2.summary.overwritten).toBe(0);
-    expect(run2.summary.skipped).toBe(run1.summary.created);
+    expect(run2.summary.skipped).toBe(1);
+    expect(run2.summary.unchanged).toBe(run1.summary.created - 1);
     expect(fs.readFileSync(targetSkillPath, 'utf8')).toBe(sentinel);
 
     const run3 = convertAndWrite({
@@ -382,7 +383,8 @@ describe('Gate 3: Conflict Safety (Skip-Existing Default & --force)', () => {
       force: true,
     });
     expect(run3.summary.created).toBe(0);
-    expect(run3.summary.overwritten).toBe(run1.summary.created);
+    expect(run3.summary.overwritten).toBe(1);
+    expect(run3.summary.unchanged).toBe(run1.summary.created - 1);
     expect(run3.summary.skipped).toBe(0);
     expect(fs.readFileSync(targetSkillPath, 'utf8')).not.toBe(sentinel);
     expect(fs.readFileSync(targetSkillPath, 'utf8')).toContain('react-hooks');
@@ -437,7 +439,8 @@ describe('Gate 4: Dry-Run Isolation', () => {
       force: true,
     });
 
-    expect(dryForce.summary.overwritten).toBe(first.summary.created);
+    expect(dryForce.summary.overwritten).toBe(1);
+    expect(dryForce.summary.unchanged).toBe(first.summary.created - 1);
     expect(fs.readFileSync(agentsPath, 'utf8')).toBe(customContent);
   });
 });

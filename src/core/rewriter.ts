@@ -52,6 +52,10 @@ export function rewritePaths(
   // 1. Skill folders first, so `.cursor/rules/<name>/` lands on `<target>/skills/<name>/`.
   if (sourceFormat === 'cursor') {
     result = result.replace(
+      /\.cursor\/rules\/([^/\s`'")\]]+)\.mdc\b/g,
+      `${targetMeta.configDir}/skills/$1/SKILL.md`,
+    );
+    result = result.replace(
       /\.cursor\/rules\/([^/\s`'")\]]+)\//g,
       `${targetMeta.configDir}/skills/$1/`,
     );
@@ -70,6 +74,11 @@ export function rewritePaths(
       'g',
     );
     result = result.replace(sourceSkillsRootRe, '.cursor/rules/');
+    // Cursor keeps one file per rule, not a folder with SKILL.md.
+    result = result.replace(
+      /\.cursor\/rules\/([^/\s`'")\]]+)\/SKILL\.md\b/g,
+      '.cursor/rules/$1.mdc',
+    );
   } else {
     const sourceSkillsRe = new RegExp(
       `${escapeRegex(sourceMeta.configDir)}\\/skills\\/`,

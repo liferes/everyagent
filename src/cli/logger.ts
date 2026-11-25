@@ -26,13 +26,41 @@ export function formatActionLine(action: WriteAction, globalMode = false): strin
       return `${prefix}${pc.green('✔ Created')} ${displayPath}`;
     case 'overwritten':
       return `${prefix}${pc.green('✔ Overwrote')} ${displayPath}`;
+    case 'unchanged':
+      return `${prefix}${pc.dim(`= Up to date ${displayPath}`)}`;
     case 'skipped':
-      return `${prefix}${pc.yellow('⚠ Skipped')} ${displayPath} ${pc.dim('(already exists)')}`;
+      return `${prefix}${pc.yellow('⚠ Skipped')} ${displayPath} ${pc.dim('(differs on disk)')}`;
     case 'duplicate':
       return `${prefix}${pc.dim(`≡ ${displayPath} (written once for both targets)`)}`;
     case 'conflict':
       return `${prefix}${pc.yellow('⚠ Conflict')} ${displayPath} ${pc.dim('(second target wanted different content; first kept)')}`;
   }
+}
+
+export function formatSummaryCounts(summary: WriteSummary): string {
+  const parts: string[] = [];
+  if (
+    summary.created > 0 ||
+    (summary.overwritten === 0 && summary.unchanged === 0)
+  ) {
+    parts.push(`${summary.created} created`);
+  }
+  if (summary.overwritten > 0) {
+    parts.push(`${summary.overwritten} overwritten`);
+  }
+  if (summary.unchanged > 0) {
+    parts.push(`${summary.unchanged} up to date`);
+  }
+  if (summary.skipped > 0 || summary.unchanged === 0) {
+    parts.push(`${summary.skipped} skipped`);
+  }
+  if (summary.duplicate > 0) {
+    parts.push(`${summary.duplicate} shared`);
+  }
+  if (summary.conflict > 0) {
+    parts.push(`${summary.conflict} conflict${summary.conflict === 1 ? '' : 's'}`);
+  }
+  return parts.join(', ');
 }
 
 export function logWriteSummary(
@@ -43,21 +71,20 @@ export function logWriteSummary(
     console.log(formatActionLine(action, options.global));
   }
 
-  const parts: string[] = [];
-  if (summary.created > 0 || summary.overwritten === 0) {
-    parts.push(`${summary.created} created`);
-  }
-  if (summary.overwritten > 0) {
-    parts.push(`${summary.overwritten} overwritten`);
-  }
-  parts.push(`${summary.skipped} skipped`);
-  if (summary.conflict > 0) {
-    parts.push(`${summary.conflict} conflict${summary.conflict === 1 ? '' : 's'}`);
-  }
-
-  const verb = options.dryRun ? 'Dry run complete!' : 'Done!';
+  const isAllUpToDate =
+    !options.dryRun &&
+    summary.created === 0 &&
+    summary.overwritten === 0 &&
+    summary.skipped === 0 &&
+    summary.conflict === 0 &&
+    summary.unchanged > 0;
+  const verb = options.dryRun
+    ? 'Dry run complete!'
+    : isAllUpToDate
+      ? 'Already up to date!'
+      : 'Done!';
   console.log('');
-  console.log(`${pc.bold(pc.green(verb))} ${parts.join(', ')}.`);
+  console.log(`${pc.bold(pc.green(verb))} ${formatSummaryCounts(summary)}.`);
 
   if (summary.conflict > 0) {
     logWarn(

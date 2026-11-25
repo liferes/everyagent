@@ -82,6 +82,7 @@ Cursor keeps rules as single `.mdc` files instead of a folder with a `SKILL.md` 
 | Flag | What it does | Default |
 | :--- | :--- | :--- |
 | `-t, --to <targets>` | Target format(s): `claude`, `opencode`, `codex`, `cursor`, `all`. Comma-separated. | Prompted in a TTY |
+| `-s, --skill <names>` | Only these skills. Root rules and shared config assets are left out. Comma-separated or repeated. | All skills |
 | `-p, --path <dir>` | Destination project directory, or pass it as the second positional arg | `.` |
 | `-f, --from <format>` | Override source detection: `auto`, `cursor`, `claude`, `opencode`, `codex` | `auto` |
 | `-g, --global` | Install into your user-level agent config directory | `false` |
@@ -96,7 +97,7 @@ Cursor keeps rules as single `.mdc` files instead of a folder with a `SKILL.md` 
 Existing files get skipped, not replaced:
 
 ```text
-⚠ Skipped .claude/skills/react-hooks/SKILL.md (already exists)
+⚠ Skipped .claude/skills/react-hooks/SKILL.md (differs on disk)
 ```
 
 `--dry-run` shows you the whole plan first, and `--force` overrides the skip.
@@ -115,6 +116,13 @@ uniskill owner/repo -t opencode
 uniskill owner/repo -t codex --force
 ```
 
+Two skills that share the same `name:` would land on the same file. The run stops before writing anything instead of letting one silently win:
+
+```text
+✖ Two source items both write ".claude/skills/review/SKILL.md" with different content.
+  Rename one of them, or install them separately with --skill.
+```
+
 ## Development
 
 ```bash
@@ -131,7 +139,7 @@ npm link
 uniskill --help
 ```
 
-The 32 tests cover the 4x4 conversion matrix, the tar extractor, the writer's skip and conflict paths, and skill-name sanitising.
+The 65 tests cover the 4x4 conversion matrix, the tar extractor, the writer's skip and conflict paths, skill-name sanitising, and the repo layouts that carry skills outside a config dir.
 
 ## License
 
