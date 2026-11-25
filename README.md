@@ -39,14 +39,21 @@ everyagent owner/repo -t claude
 More of the same:
 
 ```bash
+# auto-detect source and target from the current project
+everyagent owner/repo
+
 # detect the source format, write into .claude/ here
 everyagent owner/repo -t claude
 
 # full URL, custom directory, no confirmation prompt
 everyagent https://github.com/owner/repo -t opencode ./my-app -y
 
-# pull one folder out of a monorepo
+# pull one folder or a single SKILL.md link out of a monorepo
 everyagent owner/repo/tree/main/skills/ui -t codex
+everyagent https://github.com/owner/repo/blob/main/skills/ui/SKILL.md -t windsurf
+
+# convert from a local folder
+everyagent ./other-repo -t copilot
 
 # two targets in one pass
 everyagent owner/repo -t claude,opencode
@@ -70,6 +77,12 @@ everyagent list
 everyagent remove owner/repo
 everyagent lint
 ```
+
+### Sources and shortcuts
+
+Sources can be `owner/repo`, a GitHub `tree/` or `blob/` URL (pointing at `SKILL.md` grabs its whole skill folder), an SSH URL (`git@github.com:owner/repo.git`), a `raw.githubusercontent.com` link, or a local directory. Set `GITHUB_TOKEN` or `GH_TOKEN` to fetch private repositories.
+
+If you omit `-t`, `everyagent` checks the destination folder for existing agent configs, then falls back to the tools installed in your home directory. Format names also accept common shorthands (`ws`, `oc`, `agy`, `gh-copilot`, `roocode`, `claude-code`, `.cursor`).
 
 ## Formats
 
@@ -149,7 +162,7 @@ everyagent remove <source|--all> [dest]  # delete untouched files; refuse edited
 everyagent lint [source]        # check frontmatter, duplicates, naming, description length, links
 ```
 
-`sync` and `list` accept `--json`. Exit codes: `0` clean, `1` on drift (`--check`), refusal, or lint errors, `2` on bad arguments.
+`sync`, `list`, and `lint` accept `--json`. Exit codes: `0` clean, `1` on drift (`--check`), refusal, or lint errors, `2` on bad arguments.
 
 One case is worth knowing about. OpenCode and Codex both call their root rule `AGENTS.md`, but each rewrites internal paths for its own config directory, so the two copies differ. Convert to both in a single run and the second one loses:
 
@@ -193,6 +206,15 @@ everyagent --help
 ```
 
 The tests cover the 9x9 conversion matrix, Copilot `.github/` isolation, the tar extractor, the writer's skip and conflict paths, the manifest and sync planners, and the repo layouts that carry skills outside a config dir.
+
+## Tips and tricks
+
+- **Paste whatever GitHub URL is in your browser.** You don't need to trim `/blob/main/.../SKILL.md` down to `owner/repo` or strip `git clone ` off the front. Pointing at a `SKILL.md` automatically grabs its sibling `scripts/` and `references/` folders too.
+- **Let `-t` figure itself out.** Inside a repo that already has `.claude/` or `.windsurf/`, you can omit `-t` and `everyagent` will target what's already there. If the folder is empty, it checks your home directory for installed agents instead.
+- **Grab one skill without clobbering root rules.** Pass `-s react-hooks` when you only want a single skill; `CLAUDE.md`, `.cursorrules`, and shared assets stay untouched.
+- **Keep local tweaks safe during updates.** Skip `--force` in an interactive terminal to review diffs one file at a time, and keep what you edited. Those skipped files stay out of `.everyagent/manifest.json`, so `everyagent sync` won't overwrite them later.
+- **Wire `lint` and `sync --check` into CI.** `everyagent lint` flags duplicate names, broken relative links, and descriptions over 500 chars for Cursor (or 1,024 for other tools). `everyagent sync --check` exits `1` when tracked skills drift.
+- **Use `GITHUB_TOKEN` for private skill repos.** Export `GITHUB_TOKEN` or `GH_TOKEN` in your shell and `everyagent` sends it when pulling tarballs from private GitHub repositories.
 
 ## License
 
