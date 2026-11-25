@@ -103,8 +103,15 @@ Antigravity used to keep skills in `.agent/` before moving to `.agents/`. Both g
 | `-y, --yes` | Skip the confirmation prompt | `false` |
 | `-d, --dry-run` | Print the plan without touching disk | `false` |
 | `--force` | Overwrite existing files | `false` |
+| `--with-config` | Also copy `settings.json`, `.mcp.json`, and `hooks/` | `false` |
 | `-h, --help` | Print help | |
 | `-v, --version` | Print version | |
+
+## What travels and what stays
+
+Skills, root rules, companion assets (references, scripts), and shared assets like `commands/` and `agents/` are copied.
+
+Settings, hooks, and MCP files are not. `settings.json`, `settings.local.json`, `mcp.json`, `.mcp.json`, and anything under `hooks/` stay behind unless you pass `--with-config`. They can hold API keys and env vars, and they only mean something to the tool that wrote them. The interactive wizard lists them as a separate group so you can pick them on purpose.
 
 ## Skipping, replacing, and the one collision
 

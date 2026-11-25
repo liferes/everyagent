@@ -4,6 +4,14 @@ Versioning: `x` big update, `y` mid fix, `z` small change.
 
 Releases before 1.1.0 shipped as `uniskill`. The entries below are left as they were written.
 
+## 1.2.0 (2026-11-25)
+
+Config files stop riding along by default.
+
+- `settings.json`, `settings.local.json`, `mcp.json`, `.mcp.json`, and anything under `hooks/` are no longer copied. They can contain API keys and env vars, and only the tool that wrote them understands the format.
+- `--with-config` copies them anyway. The wizard shows them as their own group, labelled, so picking them is a deliberate choice.
+- Everything else still travels: skills, root rules, companion files, `commands/`, `agents/`.
+
 ## 1.1.0 (2026-11-25)
 
 Renamed to **everyagent**: package, binary, repo, and the manifest folder. Installs record `.everyagent/manifest.json` in the project (or `~/.everyagent/manifest.json` with `-g`). Nothing reads the old `.uniskill` path.

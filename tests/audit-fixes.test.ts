@@ -172,3 +172,55 @@ describe('loose detection stays strict about real formats', () => {
     expect(detected.map((d) => d.format)).toEqual(['claude']);
   });
 });
+
+describe('config assets', () => {
+  const files = () => [
+    file('.claude/skills/demo/SKILL.md', skill('demo')),
+    file('.claude/commands/review.md', '# review\n'),
+    file('.claude/settings.json', '{"env":{"TOKEN":"secret"}}\n'),
+    file('.claude/settings.local.json', '{}\n'),
+    file('.claude/.mcp.json', '{"servers":{}}\n'),
+    file('.claude/hooks/pre.sh', '#!/bin/sh\n'),
+  ];
+
+  it('leaves settings, hooks, and MCP files behind by default', () => {
+    const dest = makeTempDir();
+    const run = convertAndWrite({
+      files: files(),
+      sourceFormat: 'claude',
+      targetFormats: ['opencode'],
+      targetDir: dest,
+    });
+
+    const paths = run.summary.actions.map((a) => a.relativePath).sort();
+    expect(paths).toEqual([
+      '.opencode/commands/review.md',
+      '.opencode/skills/demo/SKILL.md',
+    ]);
+    expect(fs.existsSync(path.join(dest, '.opencode', 'settings.json'))).toBe(
+      false,
+    );
+    expect(fs.existsSync(path.join(dest, '.opencode', 'hooks'))).toBe(false);
+  });
+
+  it('copies them when includeConfigAssets is set', () => {
+    const dest = makeTempDir();
+    const run = convertAndWrite({
+      files: files(),
+      sourceFormat: 'claude',
+      targetFormats: ['opencode'],
+      targetDir: dest,
+      selection: { includeConfigAssets: true },
+    });
+
+    const paths = run.summary.actions.map((a) => a.relativePath).sort();
+    expect(paths).toEqual([
+      '.opencode/.mcp.json',
+      '.opencode/commands/review.md',
+      '.opencode/hooks/pre.sh',
+      '.opencode/settings.json',
+      '.opencode/settings.local.json',
+      '.opencode/skills/demo/SKILL.md',
+    ]);
+  });
+});

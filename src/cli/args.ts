@@ -24,6 +24,7 @@ export type CliParseResult =
       yes: boolean;
       dryRun: boolean;
       force: boolean;
+      withConfig: boolean;
     }
   | {
       kind: 'sync';
@@ -301,6 +302,10 @@ export function parseCliArgs(argv: string[]): CliParseResult {
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('-d, --dry-run', 'Preview planned actions without writing files')
     .option('--force', 'Overwrite existing files instead of skipping')
+    .option(
+      '--with-config',
+      'Also copy settings, hooks, and MCP files (often hold secrets)',
+    )
     .example('everyagent')
     .example('everyagent owner/repo -t claude')
     .example('everyagent owner/repo -t claude -s react-hooks,api-design')
@@ -364,5 +369,6 @@ export function parseCliArgs(argv: string[]): CliParseResult {
     yes: Boolean(opts.yes),
     dryRun: Boolean(opts.dryRun),
     force: Boolean(opts.force),
+    withConfig: Boolean(opts.withConfig),
   };
 }

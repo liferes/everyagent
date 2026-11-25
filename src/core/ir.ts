@@ -159,6 +159,22 @@ export function resolveWithin(root: string, relativePath: string): string {
   return target;
 }
 
+const CONFIG_ASSET_FILES = new Set([
+  'settings.json',
+  'settings.local.json',
+  'mcp.json',
+  '.mcp.json',
+]);
+
+/**
+ * Settings, hooks, and MCP files are tool-specific and can hold secrets, so
+ * they are left out unless `--with-config` asks for them.
+ */
+export function isConfigAssetPath(relativePath: string): boolean {
+  const p = normalizePosixPath(relativePath).replace(/^\.\//, '');
+  return CONFIG_ASSET_FILES.has(p) || p.startsWith('hooks/');
+}
+
 /** Extension first, then a NUL-byte sniff for the rest. */
 export function isTextFile(filePath: string, content: Buffer): boolean {
   const normalized = normalizePosixPath(filePath).toLowerCase();

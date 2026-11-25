@@ -95,6 +95,7 @@ describe('CLI argument parsing', () => {
       yes: true,
       dryRun: true,
       force: false,
+      withConfig: false,
     });
   });
 

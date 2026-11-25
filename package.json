@@ -1,6 +1,6 @@
 {
   "name": "everyagent",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Convert and install AI-agent skills between Cursor, Claude Code, OpenCode, Codex CLI, and Antigravity",
   "author": "liferes",
   "repository": {

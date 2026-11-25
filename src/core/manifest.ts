@@ -23,6 +23,7 @@ export interface ManifestInstallEntry {
   skills?: string[];
   includeRootRules?: boolean;
   includeSharedAssets?: boolean;
+  includeConfigAssets?: boolean;
   installedAt: string;
   files: ManifestFileEntry[];
 }
@@ -164,6 +165,9 @@ function normalizeInstallEntry(entry: ManifestInstallEntry): ManifestInstallEntr
       : {}),
     ...(entry.includeSharedAssets !== undefined
       ? { includeSharedAssets: entry.includeSharedAssets }
+      : {}),
+    ...(entry.includeConfigAssets !== undefined
+      ? { includeConfigAssets: entry.includeConfigAssets }
       : {}),
     installedAt: entry.installedAt,
     files,
@@ -394,6 +398,7 @@ export function recordManifestEntries(options: {
     skillNames?: string[];
     includeRootRules?: boolean;
     includeSharedAssets?: boolean;
+    includeConfigAssets?: boolean;
   };
   plannedTargets: Array<{
     targetFormat: FormatId;
@@ -484,6 +489,9 @@ export function recordManifestEntries(options: {
         : {}),
       ...(options.selection?.includeSharedAssets !== undefined
         ? { includeSharedAssets: options.selection.includeSharedAssets }
+        : {}),
+      ...(options.selection?.includeConfigAssets !== undefined
+        ? { includeConfigAssets: options.selection.includeConfigAssets }
         : {}),
       installedAt: sameAsPrior ? prior.installedAt : now,
       files,

@@ -3766,6 +3766,16 @@ function resolveWithin(root, relativePath) {
   }
   return target;
 }
+var CONFIG_ASSET_FILES = /* @__PURE__ */ new Set([
+  "settings.json",
+  "settings.local.json",
+  "mcp.json",
+  ".mcp.json"
+]);
+function isConfigAssetPath(relativePath) {
+  const p2 = normalizePosixPath(relativePath).replace(/^\.\//, "");
+  return CONFIG_ASSET_FILES.has(p2) || p2.startsWith("hooks/");
+}
 function isTextFile(filePath, content) {
   const normalized = normalizePosixPath(filePath).toLowerCase();
   const lastDot = normalized.lastIndexOf(".");
@@ -5269,6 +5279,7 @@ function normalizeInstallEntry(entry) {
     ...entry.skills ? { skills: [...entry.skills] } : {},
     ...entry.includeRootRules !== void 0 ? { includeRootRules: entry.includeRootRules } : {},
     ...entry.includeSharedAssets !== void 0 ? { includeSharedAssets: entry.includeSharedAssets } : {},
+    ...entry.includeConfigAssets !== void 0 ? { includeConfigAssets: entry.includeConfigAssets } : {},
     installedAt: entry.installedAt,
     files
   };
@@ -5480,6 +5491,7 @@ function recordManifestEntries(options2) {
       ...options2.selection?.skillNames ? { skills: options2.selection.skillNames } : {},
       ...options2.selection?.includeRootRules !== void 0 ? { includeRootRules: options2.selection.includeRootRules } : {},
       ...options2.selection?.includeSharedAssets !== void 0 ? { includeSharedAssets: options2.selection.includeSharedAssets } : {},
+      ...options2.selection?.includeConfigAssets !== void 0 ? { includeConfigAssets: options2.selection.includeConfigAssets } : {},
       installedAt: sameAsPrior ? prior.installedAt : now,
       files
     });
@@ -5713,7 +5725,7 @@ function shouldPromptTranslationScope(pkg) {
 }
 function filterPackage(pkg, selection) {
   if (!selection) {
-    return pkg;
+    return stripConfigAssets(pkg);
   }
   let skills = pkg.skills;
   if (selection.skillNames !== void 0) {
@@ -5775,7 +5787,7 @@ function filterPackage(pkg, selection) {
     );
   }
   const rootRules = selection.includeRootRules === false ? [] : pkg.rootRules;
-  const sharedAssets = selection.includeSharedAssets === false ? [] : pkg.sharedAssets;
+  const sharedAssets = selection.includeSharedAssets === false ? [] : selection.includeConfigAssets === true ? pkg.sharedAssets : pkg.sharedAssets.filter((a) => !isConfigAssetPath(a.relativePath));
   if (skills.length === 0 && rootRules.length === 0 && sharedAssets.length === 0) {
     throw new Error(
       "Nothing selected to translate. Select at least one skill, root rule, or shared asset."
@@ -5787,6 +5799,12 @@ function filterPackage(pkg, selection) {
     rootRules,
     sharedAssets
   };
+}
+function stripConfigAssets(pkg) {
+  const sharedAssets = pkg.sharedAssets.filter(
+    (a) => !isConfigAssetPath(a.relativePath)
+  );
+  return sharedAssets.length === pkg.sharedAssets.length ? pkg : { ...pkg, sharedAssets };
 }
 function assertUniqueOutputs(emitted, targetFormat) {
   const seen = /* @__PURE__ */ new Map();
@@ -5811,7 +5829,7 @@ function convertAndWrite(options2) {
     subpathName: options2.subpathName,
     allowLoose: options2.allowLoose
   });
-  const pkg = options2.selection ? filterPackage(parsedPkg, options2.selection) : parsedPkg;
+  const pkg = options2.selection ? filterPackage(parsedPkg, options2.selection) : options2.pkg ? parsedPkg : stripConfigAssets(parsedPkg);
   const planned = options2.targetFormats.map((targetFormat) => {
     const targetAdapter = getAdapter(targetFormat);
     const emitted = targetAdapter.emit(rewritePackage(pkg, targetFormat), {
@@ -6684,7 +6702,7 @@ var cac = (name = "") => new CAC(name);
 // package.json
 var package_default = {
   name: "everyagent",
-  version: "1.1.0",
+  version: "1.2.0",
   description: "Convert and install AI-agent skills between Cursor, Claude Code, OpenCode, Codex CLI, and Antigravity",
   author: "liferes",
   repository: {
@@ -6920,7 +6938,10 @@ function parseCliArgs(argv) {
     "-f, --from <format>",
     "Override source auto-detection (auto, cursor, claude, opencode, codex, antigravity)",
     { default: "auto" }
-  ).option("-g, --global", "Install to user global agent config directory").option("-y, --yes", "Skip confirmation prompt").option("-d, --dry-run", "Preview planned actions without writing files").option("--force", "Overwrite existing files instead of skipping").example("everyagent").example("everyagent owner/repo -t claude").example("everyagent owner/repo -t claude -s react-hooks,api-design").example("everyagent https://github.com/u/r -t opencode ./app -y").example("everyagent sync").example("everyagent list").example("everyagent remove owner/repo");
+  ).option("-g, --global", "Install to user global agent config directory").option("-y, --yes", "Skip confirmation prompt").option("-d, --dry-run", "Preview planned actions without writing files").option("--force", "Overwrite existing files instead of skipping").option(
+    "--with-config",
+    "Also copy settings, hooks, and MCP files (often hold secrets)"
+  ).example("everyagent").example("everyagent owner/repo -t claude").example("everyagent owner/repo -t claude -s react-hooks,api-design").example("everyagent https://github.com/u/r -t opencode ./app -y").example("everyagent sync").example("everyagent list").example("everyagent remove owner/repo");
   cli.help();
   cli.version(package_default.version);
   const parsed = cli.parse(argv, { run: false });
@@ -6957,7 +6978,8 @@ function parseCliArgs(argv) {
     global: Boolean(opts.global),
     yes: Boolean(opts.yes),
     dryRun: Boolean(opts.dryRun),
-    force: Boolean(opts.force)
+    force: Boolean(opts.force),
+    withConfig: Boolean(opts.withConfig)
   };
 }
 
@@ -7887,10 +7909,15 @@ function formatSelectionCounts(pkg) {
   for (const rule of pkg.rootRules) {
     parts.push(rule.sourceFilename);
   }
-  if (pkg.sharedAssets.length > 0) {
-    parts.push(
-      `${pkg.sharedAssets.length} shared asset${pkg.sharedAssets.length === 1 ? "" : "s"}`
-    );
+  const configCount = pkg.sharedAssets.filter(
+    (a) => isConfigAssetPath(a.relativePath)
+  ).length;
+  const sharedCount = pkg.sharedAssets.length - configCount;
+  if (sharedCount > 0) {
+    parts.push(`${sharedCount} shared asset${sharedCount === 1 ? "" : "s"}`);
+  }
+  if (configCount > 0) {
+    parts.push(`${configCount} config file${configCount === 1 ? "" : "s"}`);
   }
   return parts.join(", ");
 }
@@ -7909,9 +7936,18 @@ function formatPackageOverview(pkg, maxSkills = 12) {
   for (const rule of pkg.rootRules) {
     lines.push(`\u2022 ${rule.sourceFilename} (root rule)`);
   }
-  if (pkg.sharedAssets.length > 0) {
+  const configCount = pkg.sharedAssets.filter(
+    (a) => isConfigAssetPath(a.relativePath)
+  ).length;
+  const sharedCount = pkg.sharedAssets.length - configCount;
+  if (sharedCount > 0) {
     lines.push(
-      `\u2022 Shared config assets (${pkg.sharedAssets.length} file${pkg.sharedAssets.length === 1 ? "" : "s"})`
+      `\u2022 Shared config assets (${sharedCount} file${sharedCount === 1 ? "" : "s"})`
+    );
+  }
+  if (configCount > 0) {
+    lines.push(
+      `\u2022 Settings, hooks, MCP (${configCount} file${configCount === 1 ? "" : "s"}, skipped unless --with-config)`
     );
   }
   return lines.join("\n");
@@ -7961,7 +7997,8 @@ async function promptTranslationScope(pkg) {
   if (scope === "all") {
     return {
       includeRootRules: true,
-      includeSharedAssets: true
+      includeSharedAssets: true,
+      includeConfigAssets: true
     };
   }
   const options2 = [];
@@ -7988,12 +8025,26 @@ async function promptTranslationScope(pkg) {
       hint: "root instruction file"
     });
   }
-  if (pkg.sharedAssets.length > 0) {
-    const sample = pkg.sharedAssets.slice(0, 2).map((a) => a.relativePath).join(", ");
+  const configAssets = pkg.sharedAssets.filter(
+    (a) => isConfigAssetPath(a.relativePath)
+  );
+  const sharedAssets = pkg.sharedAssets.filter(
+    (a) => !isConfigAssetPath(a.relativePath)
+  );
+  if (sharedAssets.length > 0) {
+    const sample = sharedAssets.slice(0, 2).map((a) => a.relativePath).join(", ");
     options2.push({
       value: "__shared_assets__",
-      label: `Shared config assets (${pkg.sharedAssets.length} file${pkg.sharedAssets.length === 1 ? "" : "s"})`,
-      hint: pkg.sharedAssets.length > 2 ? `${sample}, ...` : sample
+      label: `Shared config assets (${sharedAssets.length} file${sharedAssets.length === 1 ? "" : "s"})`,
+      hint: sharedAssets.length > 2 ? `${sample}, ...` : sample
+    });
+  }
+  if (configAssets.length > 0) {
+    const sample = configAssets.slice(0, 2).map((a) => a.relativePath).join(", ");
+    options2.push({
+      value: "__config_assets__",
+      label: `Settings, hooks, MCP (${configAssets.length} file${configAssets.length === 1 ? "" : "s"})`,
+      hint: `${configAssets.length > 2 ? `${sample}, ...` : sample} \xB7 may contain secrets`
     });
   }
   const picked = assertNotCancelled(
@@ -8008,7 +8059,8 @@ async function promptTranslationScope(pkg) {
   return {
     skillNames,
     includeRootRules: pickedSet.has("__root_rules__"),
-    includeSharedAssets: pickedSet.has("__shared_assets__")
+    includeSharedAssets: pickedSet.has("__shared_assets__") || pickedSet.has("__config_assets__"),
+    includeConfigAssets: pickedSet.has("__config_assets__")
   };
 }
 async function promptTargetFormatSelection(sourceFormat, detectedTargets) {
@@ -8332,7 +8384,7 @@ async function runInteractiveWizard() {
     formatPackageOverview(pkg),
     `${fetchResult.source.displayLabel} \xB7 ${FORMAT_META[chosenDetection.format].label}`
   );
-  let filteredPkg = pkg;
+  let filteredPkg = filterPackage(pkg);
   let selection;
   if (shouldPromptTranslationScope(pkg)) {
     const picked = await promptTranslationScope(pkg);
@@ -8482,11 +8534,12 @@ function emitForSyncEntry(pkg, entry) {
     const wanted = new Set(entry.skills.map((s) => s.toLowerCase()));
     skills = pkg.skills.filter((s) => wanted.has(s.name.toLowerCase()));
   }
+  const sharedAssets = entry.includeSharedAssets === false ? [] : entry.includeConfigAssets === true ? pkg.sharedAssets : pkg.sharedAssets.filter((a) => !isConfigAssetPath(a.relativePath));
   const scopedPkg = {
     ...pkg,
     skills,
     rootRules: entry.includeRootRules === false ? [] : pkg.rootRules,
-    sharedAssets: entry.includeSharedAssets === false ? [] : pkg.sharedAssets
+    sharedAssets
   };
   return getAdapter(entry.targetFormat).emit(
     rewritePackage(scopedPkg, entry.targetFormat),
@@ -8911,7 +8964,10 @@ async function main() {
     }
     selection = pickedScope;
   }
-  const filteredPkg = selection ? filterPackage(pkg, selection) : pkg;
+  if (parsed.withConfig) {
+    selection = { ...selection ?? {}, includeConfigAssets: true };
+  }
+  const filteredPkg = filterPackage(pkg, selection);
   let targetFormats = parsed.targets;
   let wasAutoDetected = false;
   if (!targetFormats) {

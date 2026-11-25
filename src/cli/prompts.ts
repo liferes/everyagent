@@ -11,6 +11,7 @@ import { parseGitHubSource } from '../core/fetcher.js';
 import {
   FORMAT_IDS,
   FORMAT_META,
+  isConfigAssetPath,
   type FormatId,
   type EveryagentPackage,
 } from '../core/ir.js';
@@ -65,10 +66,15 @@ export function formatSelectionCounts(pkg: EveryagentPackage): string {
   for (const rule of pkg.rootRules) {
     parts.push(rule.sourceFilename);
   }
-  if (pkg.sharedAssets.length > 0) {
-    parts.push(
-      `${pkg.sharedAssets.length} shared asset${pkg.sharedAssets.length === 1 ? '' : 's'}`,
-    );
+  const configCount = pkg.sharedAssets.filter((a) =>
+    isConfigAssetPath(a.relativePath),
+  ).length;
+  const sharedCount = pkg.sharedAssets.length - configCount;
+  if (sharedCount > 0) {
+    parts.push(`${sharedCount} shared asset${sharedCount === 1 ? '' : 's'}`);
+  }
+  if (configCount > 0) {
+    parts.push(`${configCount} config file${configCount === 1 ? '' : 's'}`);
   }
   return parts.join(', ');
 }
@@ -98,9 +104,18 @@ export function formatPackageOverview(
     lines.push(`• ${rule.sourceFilename} (root rule)`);
   }
 
-  if (pkg.sharedAssets.length > 0) {
+  const configCount = pkg.sharedAssets.filter((a) =>
+    isConfigAssetPath(a.relativePath),
+  ).length;
+  const sharedCount = pkg.sharedAssets.length - configCount;
+  if (sharedCount > 0) {
     lines.push(
-      `• Shared config assets (${pkg.sharedAssets.length} file${pkg.sharedAssets.length === 1 ? '' : 's'})`,
+      `• Shared config assets (${sharedCount} file${sharedCount === 1 ? '' : 's'})`,
+    );
+  }
+  if (configCount > 0) {
+    lines.push(
+      `• Settings, hooks, MCP (${configCount} file${configCount === 1 ? '' : 's'}, skipped unless --with-config)`,
     );
   }
 
@@ -133,6 +148,7 @@ export async function promptTranslationScope(
   skillNames?: string[];
   includeRootRules?: boolean;
   includeSharedAssets?: boolean;
+  includeConfigAssets?: boolean;
 } | null> {
   const counts = formatSelectionCounts(pkg);
   const scope = assertNotCancelled(
@@ -165,6 +181,7 @@ export async function promptTranslationScope(
     return {
       includeRootRules: true,
       includeSharedAssets: true,
+      includeConfigAssets: true,
     };
   }
 
@@ -195,15 +212,34 @@ export async function promptTranslationScope(
     });
   }
 
-  if (pkg.sharedAssets.length > 0) {
-    const sample = pkg.sharedAssets
+  const configAssets = pkg.sharedAssets.filter((a) =>
+    isConfigAssetPath(a.relativePath),
+  );
+  const sharedAssets = pkg.sharedAssets.filter(
+    (a) => !isConfigAssetPath(a.relativePath),
+  );
+
+  if (sharedAssets.length > 0) {
+    const sample = sharedAssets
       .slice(0, 2)
       .map((a) => a.relativePath)
       .join(', ');
     options.push({
       value: '__shared_assets__',
-      label: `Shared config assets (${pkg.sharedAssets.length} file${pkg.sharedAssets.length === 1 ? '' : 's'})`,
-      hint: pkg.sharedAssets.length > 2 ? `${sample}, ...` : sample,
+      label: `Shared config assets (${sharedAssets.length} file${sharedAssets.length === 1 ? '' : 's'})`,
+      hint: sharedAssets.length > 2 ? `${sample}, ...` : sample,
+    });
+  }
+
+  if (configAssets.length > 0) {
+    const sample = configAssets
+      .slice(0, 2)
+      .map((a) => a.relativePath)
+      .join(', ');
+    options.push({
+      value: '__config_assets__',
+      label: `Settings, hooks, MCP (${configAssets.length} file${configAssets.length === 1 ? '' : 's'})`,
+      hint: `${configAssets.length > 2 ? `${sample}, ...` : sample} · may contain secrets`,
     });
   }
 
@@ -223,7 +259,9 @@ export async function promptTranslationScope(
   return {
     skillNames,
     includeRootRules: pickedSet.has('__root_rules__'),
-    includeSharedAssets: pickedSet.has('__shared_assets__'),
+    includeSharedAssets:
+      pickedSet.has('__shared_assets__') || pickedSet.has('__config_assets__'),
+    includeConfigAssets: pickedSet.has('__config_assets__'),
   };
 }
 
@@ -647,7 +685,7 @@ export async function runInteractiveWizard(): Promise<void> {
     `${fetchResult!.source.displayLabel} · ${FORMAT_META[chosenDetection.format].label}`,
   );
 
-  let filteredPkg = pkg;
+  let filteredPkg = filterPackage(pkg);
   let selection: PackageSelection | undefined;
   if (shouldPromptTranslationScope(pkg)) {
     const picked = await promptTranslationScope(pkg);

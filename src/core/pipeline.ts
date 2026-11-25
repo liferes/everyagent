@@ -3,7 +3,12 @@ import type { DetectionResult } from '../adapters/types.js';
 import { fetchSource, type FetchResult } from './fetcher.js';
 import { findClosestMatches, normalizeToken } from './fuzzy.js';
 import type { FormatId, Skill, SourceFile, EveryagentPackage } from './ir.js';
-import { FORMAT_META, normalizePosixPath, type EmittedFile } from './ir.js';
+import {
+  FORMAT_META,
+  isConfigAssetPath,
+  normalizePosixPath,
+  type EmittedFile,
+} from './ir.js';
 import { rewritePackage } from './rewriter.js';
 import { writeEmittedFiles, type WriteSummary } from './writer.js';
 
@@ -19,6 +24,8 @@ export interface PackageSelection {
   includeRootRules?: boolean;
   /** Include shared config assets. Default: true. */
   includeSharedAssets?: boolean;
+  /** Include settings, hooks, and MCP files. Default: false. */
+  includeConfigAssets?: boolean;
 }
 
 export interface ConvertAndWriteOptions {
@@ -119,7 +126,7 @@ export function filterPackage(
   selection?: PackageSelection,
 ): EveryagentPackage {
   if (!selection) {
-    return pkg;
+    return stripConfigAssets(pkg);
   }
 
   let skills = pkg.skills;
@@ -191,7 +198,11 @@ export function filterPackage(
 
   const rootRules = selection.includeRootRules === false ? [] : pkg.rootRules;
   const sharedAssets =
-    selection.includeSharedAssets === false ? [] : pkg.sharedAssets;
+    selection.includeSharedAssets === false
+      ? []
+      : selection.includeConfigAssets === true
+        ? pkg.sharedAssets
+        : pkg.sharedAssets.filter((a) => !isConfigAssetPath(a.relativePath));
 
   if (
     skills.length === 0 &&
@@ -209,6 +220,16 @@ export function filterPackage(
     rootRules,
     sharedAssets,
   };
+}
+
+/** Drop settings, hooks, and MCP files unless the caller opted in. */
+export function stripConfigAssets(pkg: EveryagentPackage): EveryagentPackage {
+  const sharedAssets = pkg.sharedAssets.filter(
+    (a) => !isConfigAssetPath(a.relativePath),
+  );
+  return sharedAssets.length === pkg.sharedAssets.length
+    ? pkg
+    : { ...pkg, sharedAssets };
 }
 
 /**
@@ -250,7 +271,9 @@ export function convertAndWrite(
     });
   const pkg = options.selection
     ? filterPackage(parsedPkg, options.selection)
-    : parsedPkg;
+    : options.pkg
+      ? parsedPkg
+      : stripConfigAssets(parsedPkg);
 
   // Build and validate every target first, so a collision in the last format
   // cannot leave the earlier ones half-written.

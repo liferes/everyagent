@@ -5,6 +5,7 @@ import { getAdapter, isWeakRootRuleOnly } from './adapters/registry.js';
 import { detectTargetFormats } from './core/detector.js';
 import {
   FORMAT_META,
+  isConfigAssetPath,
   normalizePosixPath,
   resolveWithin,
   type EmittedFile,
@@ -75,11 +76,18 @@ function emitForSyncEntry(
     skills = pkg.skills.filter((s) => wanted.has(s.name.toLowerCase()));
   }
 
+  const sharedAssets =
+    entry.includeSharedAssets === false
+      ? []
+      : entry.includeConfigAssets === true
+        ? pkg.sharedAssets
+        : pkg.sharedAssets.filter((a) => !isConfigAssetPath(a.relativePath));
+
   const scopedPkg: EveryagentPackage = {
     ...pkg,
     skills,
     rootRules: entry.includeRootRules === false ? [] : pkg.rootRules,
-    sharedAssets: entry.includeSharedAssets === false ? [] : pkg.sharedAssets,
+    sharedAssets,
   };
 
   return getAdapter(entry.targetFormat).emit(
@@ -605,7 +613,11 @@ async function main(): Promise<void> {
     selection = pickedScope;
   }
 
-  const filteredPkg = selection ? filterPackage(pkg, selection) : pkg;
+  if (parsed.withConfig) {
+    selection = { ...(selection ?? {}), includeConfigAssets: true };
+  }
+
+  const filteredPkg = filterPackage(pkg, selection);
 
   let targetFormats = parsed.targets;
   let wasAutoDetected = false;
