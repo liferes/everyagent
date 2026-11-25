@@ -1,6 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
-import type { EmittedFile, SourceFile, UniskillPackage } from '../core/ir.js';
+import type { EmittedFile, SourceFile, EveryagentPackage } from '../core/ir.js';
 import {
   detectSkillMdFormat,
   emitSkillMdFormat,
@@ -25,11 +25,11 @@ export const codexAdapter: Adapter = {
     return detectSkillMdFormat('codex', files, options);
   },
 
-  parse(files: SourceFile[], options?: ParseOptions): UniskillPackage {
+  parse(files: SourceFile[], options?: ParseOptions): EveryagentPackage {
     return parseSkillMdFormat('codex', files, options);
   },
 
-  emit(pkg: UniskillPackage, options?: EmitOptions): EmittedFile[] {
+  emit(pkg: EveryagentPackage, options?: EmitOptions): EmittedFile[] {
     return emitSkillMdFormat('codex', pkg, options, false);
   },
 };

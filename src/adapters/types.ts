@@ -9,7 +9,7 @@ import {
   type RootRule,
   type Skill,
   type SourceFile,
-  type UniskillPackage,
+  type EveryagentPackage,
 } from '../core/ir.js';
 import { formatSkillDescriptionForSkillMd } from '../core/rewriter.js';
 
@@ -21,6 +21,19 @@ export interface DetectionResult {
   summary: string;
   matchedPaths: string[];
   allowLoose?: boolean;
+}
+
+/**
+ * True when the only evidence for a format is its root rule file: no skills,
+ * no config folder. Those detections say the file exists, not that the project
+ * belongs to that tool, so they lose to any detection that found real content.
+ */
+export function isRootRuleOnly(detection: DetectionResult): boolean {
+  return (
+    detection.skillCount === 0 &&
+    detection.matchedPaths.length === 1 &&
+    detection.matchedPaths[0] === FORMAT_META[detection.format].rootRuleFile
+  );
 }
 
 export interface EmitOptions {
@@ -39,8 +52,8 @@ export interface Adapter {
   readonly rootRuleFile: string;
   getGlobalDir(): string;
   detect(files: SourceFile[], options?: ParseOptions): DetectionResult | null;
-  parse(files: SourceFile[], options?: ParseOptions): UniskillPackage;
-  emit(pkg: UniskillPackage, options?: EmitOptions): EmittedFile[];
+  parse(files: SourceFile[], options?: ParseOptions): EveryagentPackage;
+  emit(pkg: EveryagentPackage, options?: EmitOptions): EmittedFile[];
 }
 
 export interface ParsedMarkdown {
@@ -194,13 +207,12 @@ export function parseSkillMdFormat(
   format: FormatId,
   files: SourceFile[],
   options?: ParseOptions,
-): UniskillPackage {
+): EveryagentPackage {
   const meta = FORMAT_META[format];
   const skillsPrefix = `${meta.configDir}/skills/`;
   const configPrefix = `${meta.configDir}/`;
 
   const skillsMap = new Map<string, Skill>();
-  const looseAssetsBySkill = new Map<string, Asset[]>();
   const rootRules: RootRule[] = [];
   const sharedAssets: Asset[] = [];
 
@@ -355,13 +367,6 @@ export function parseSkillMdFormat(
     }
   }
 
-  for (const [key, assets] of looseAssetsBySkill.entries()) {
-    const skill = skillsMap.get(key);
-    if (skill) {
-      skill.assets.push(...assets);
-    }
-  }
-
   return {
     sourceFormat: format,
     sourceLabel: meta.label,
@@ -373,7 +378,7 @@ export function parseSkillMdFormat(
 
 export function emitSkillMdFormat(
   format: FormatId,
-  pkg: UniskillPackage,
+  pkg: EveryagentPackage,
   options?: EmitOptions,
   includeAllowedTools = false,
 ): EmittedFile[] {

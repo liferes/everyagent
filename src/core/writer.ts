@@ -16,6 +16,7 @@ export interface WriteAction {
   status: WriteStatus;
   targetFormat: FormatId;
   dryRun: boolean;
+  wouldBeContent?: Buffer;
 }
 
 export interface WriteSummary {
@@ -33,6 +34,8 @@ export interface WriteOptions {
   dryRun?: boolean;
   /** Paths already emitted earlier in this run, mapped to their content. */
   seenPaths?: Map<string, Buffer>;
+  /** Absolute paths explicitly approved by the user for replacement. */
+  overwrite?: ReadonlySet<string>;
 }
 
 /**
@@ -75,7 +78,9 @@ export function writeEmittedFiles(
 
     const emittedEarlier = seenPaths.get(absolutePath);
     const exists = fs.existsSync(absolutePath);
+    const shouldReplace = force || Boolean(options.overwrite?.has(absolutePath));
     let status: WriteStatus;
+    let wouldBeContent: Buffer | undefined;
 
     if (emittedEarlier) {
       // Two targets in one run want the same file. First writer wins, and
@@ -98,9 +103,10 @@ export function writeEmittedFiles(
       if (existingBuffer && existingBuffer.equals(file.content)) {
         status = 'unchanged';
         summary.unchanged += 1;
-      } else if (!force) {
+      } else if (!shouldReplace) {
         status = 'skipped';
         summary.skipped += 1;
+        wouldBeContent = file.content;
       } else {
         status = 'overwritten';
         summary.overwritten += 1;
@@ -127,6 +133,7 @@ export function writeEmittedFiles(
       status,
       targetFormat: file.targetFormat,
       dryRun,
+      ...(wouldBeContent !== undefined ? { wouldBeContent } : {}),
     });
   }
 

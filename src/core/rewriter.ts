@@ -4,7 +4,7 @@ import {
   type FormatId,
   type RootRule,
   type Skill,
-  type UniskillPackage,
+  type EveryagentPackage,
 } from './ir.js';
 
 function escapeRegex(value: string): string {
@@ -40,14 +40,26 @@ export function rewritePaths(
   sourceFormat: FormatId,
   targetFormat: FormatId,
 ): string {
-  if (sourceFormat === targetFormat || !text) {
+  if (!text) {
     return text;
+  }
+
+  let result = text;
+
+  // Antigravity moved from `.agent/` to `.agents/`. The alias has to be fixed
+  // even when source and target are the same format, since renaming the folder
+  // is exactly what a `.agent/` -> antigravity run is for.
+  if (sourceFormat === 'antigravity') {
+    result = result.replace(/\.agent\/skills\//g, '.agents/skills/');
+    result = result.replace(/(^|[^A-Za-z0-9_.-])\.agent\//g, '$1.agents/');
+  }
+
+  if (sourceFormat === targetFormat) {
+    return result;
   }
 
   const sourceMeta = FORMAT_META[sourceFormat];
   const targetMeta = FORMAT_META[targetFormat];
-
-  let result = text;
 
   // 1. Skill folders first, so `.cursor/rules/<name>/` lands on `<target>/skills/<name>/`.
   if (sourceFormat === 'cursor') {
@@ -134,9 +146,9 @@ function rewriteAsset(
  * Copy, don't mutate: the same IR feeds every target in a run.
  */
 export function rewritePackage(
-  pkg: UniskillPackage,
+  pkg: EveryagentPackage,
   targetFormat: FormatId,
-): UniskillPackage {
+): EveryagentPackage {
   const skills: Skill[] = pkg.skills.map((skill) => ({
     ...skill,
     globs: skill.globs ? [...skill.globs] : undefined,

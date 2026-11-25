@@ -1,6 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
-import type { EmittedFile, SourceFile, UniskillPackage } from '../core/ir.js';
+import type { EmittedFile, SourceFile, EveryagentPackage } from '../core/ir.js';
 import {
   detectSkillMdFormat,
   emitSkillMdFormat,
@@ -25,11 +25,11 @@ export const claudeAdapter: Adapter = {
     return detectSkillMdFormat('claude', files, options);
   },
 
-  parse(files: SourceFile[], options?: ParseOptions): UniskillPackage {
+  parse(files: SourceFile[], options?: ParseOptions): EveryagentPackage {
     return parseSkillMdFormat('claude', files, options);
   },
 
-  emit(pkg: UniskillPackage, options?: EmitOptions): EmittedFile[] {
+  emit(pkg: EveryagentPackage, options?: EmitOptions): EmittedFile[] {
     return emitSkillMdFormat('claude', pkg, options, true);
   },
 };

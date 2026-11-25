@@ -1,4 +1,6 @@
-export const FORMAT_IDS = ['cursor', 'claude', 'opencode', 'codex'] as const;
+import path from 'node:path';
+
+export const FORMAT_IDS = ['cursor', 'claude', 'opencode', 'codex', 'antigravity'] as const;
 
 export type FormatId = (typeof FORMAT_IDS)[number];
 
@@ -34,6 +36,12 @@ export const FORMAT_META: Record<FormatId, FormatMeta> = {
     configDir: '.codex',
     rootRuleFile: 'AGENTS.md',
   },
+  antigravity: {
+    id: 'antigravity',
+    label: 'Antigravity (.agents/)',
+    configDir: '.agents',
+    rootRuleFile: 'GEMINI.md',
+  },
 };
 
 export interface SourceFile {
@@ -64,7 +72,7 @@ export interface RootRule {
   content: string;
 }
 
-export interface UniskillPackage {
+export interface EveryagentPackage {
   sourceFormat: FormatId;
   sourceLabel: string;
   skills: Skill[];
@@ -137,6 +145,18 @@ export function normalizePosixPath(inputPath: string): string {
     .replace(/^(?:\.\/)+/, '')
     .replace(/^\/+/, '')
     .replace(/\/+$/, '');
+}
+
+/** Resolve `relativePath` under `root` and refuse anything that lands outside it. */
+export function resolveWithin(root: string, relativePath: string): string {
+  const resolvedRoot = path.resolve(root);
+  const target = path.resolve(resolvedRoot, relativePath);
+  if (target !== resolvedRoot && !target.startsWith(resolvedRoot + path.sep)) {
+    throw new Error(
+      `Refusing path outside the install directory: "${relativePath}".`,
+    );
+  }
+  return target;
 }
 
 /** Extension first, then a NUL-byte sniff for the rest. */

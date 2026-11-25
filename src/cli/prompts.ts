@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import * as p from '@clack/prompts';
 import pc from 'picocolors';
 import { getAdapter } from '../adapters/registry.js';
@@ -11,16 +12,19 @@ import {
   FORMAT_IDS,
   FORMAT_META,
   type FormatId,
-  type UniskillPackage,
+  type EveryagentPackage,
 } from '../core/ir.js';
+import { recordManifestEntries } from '../core/manifest.js';
 import {
   convertAndWrite,
   fetchAndDetect,
   filterPackage,
   parseDetectedPackage,
   shouldPromptTranslationScope,
+  type PackageSelection,
 } from '../core/pipeline.js';
-import type { WriteSummary } from '../core/writer.js';
+import type { WriteAction, WriteSummary } from '../core/writer.js';
+import { formatShortDiff } from './diff.js';
 import { formatActionLine, formatSummaryCounts } from './logger.js';
 
 export type WriteActionChoice =
@@ -53,7 +57,7 @@ export function formatDetectedHeader(
   return `Detected ${sourceLabel} (${FORMAT_META[format].configDir})`;
 }
 
-export function formatSelectionCounts(pkg: UniskillPackage): string {
+export function formatSelectionCounts(pkg: EveryagentPackage): string {
   const parts: string[] = [];
   if (pkg.skills.length > 0) {
     parts.push(`${pkg.skills.length} skill${pkg.skills.length === 1 ? '' : 's'}`);
@@ -70,7 +74,7 @@ export function formatSelectionCounts(pkg: UniskillPackage): string {
 }
 
 export function formatPackageOverview(
-  pkg: UniskillPackage,
+  pkg: EveryagentPackage,
   maxSkills = 12,
 ): string {
   const lines: string[] = [];
@@ -108,7 +112,7 @@ export async function promptSourceFormatSelection(
 ): Promise<DetectionResult> {
   const selected = assertNotCancelled(
     await p.select({
-      message: 'Multiple formats detected. Which source format should Uniskill read from?',
+      message: 'Multiple formats detected. Which source format should Everyagent read from?',
       options: detections.map((d) => ({
         value: d.format,
         label: d.summary,
@@ -124,7 +128,7 @@ export async function promptSourceFormatSelection(
 }
 
 export async function promptTranslationScope(
-  pkg: UniskillPackage,
+  pkg: EveryagentPackage,
 ): Promise<{
   skillNames?: string[];
   includeRootRules?: boolean;
@@ -412,6 +416,108 @@ export async function promptWriteAction(options: {
   );
 }
 
+/**
+ * Ask the user how to handle files that exist on disk with differing content.
+ * Returns the set of absolute paths approved for replacement.
+ */
+export async function promptConflictResolution(
+  actions: WriteAction[],
+  globalMode = false,
+): Promise<Set<string>> {
+  const differing = actions.filter((a) => a.status === 'skipped');
+  if (differing.length === 0) {
+    return new Set();
+  }
+
+  const count = differing.length;
+  const choice = assertNotCancelled(
+    await p.select<'replace_all' | 'review' | 'keep_all'>({
+      message: `${count} existing file${count === 1 ? '' : 's'} differ${count === 1 ? 's' : ''} on disk. What would you like to do?`,
+      options: [
+        {
+          value: 'replace_all',
+          label: 'Replace all differing files',
+          hint: `${count} file${count === 1 ? '' : 's'}`,
+        },
+        {
+          value: 'review',
+          label: 'Review one by one',
+          hint: 'show diff for each file',
+        },
+        {
+          value: 'keep_all',
+          label: 'Keep them',
+          hint: 'leave differing files untouched',
+        },
+      ],
+    }),
+  );
+
+  if (choice === 'replace_all') {
+    return new Set(differing.map((a) => a.absolutePath));
+  }
+  if (choice === 'keep_all') {
+    return new Set();
+  }
+
+  const toReplace = new Set<string>();
+  for (let i = 0; i < differing.length; i++) {
+    const action = differing[i];
+    const displayPath = globalMode ? action.absolutePath : action.relativePath;
+    let diskBuf = Buffer.alloc(0);
+    try {
+      diskBuf = fs.readFileSync(action.absolutePath);
+    } catch {
+      diskBuf = Buffer.alloc(0);
+    }
+    const diff = formatShortDiff(
+      diskBuf,
+      action.wouldBeContent ?? Buffer.alloc(0),
+      action.relativePath,
+    );
+    p.note(diff, `${displayPath} (${i + 1}/${differing.length})`);
+
+    const perFile = assertNotCancelled(
+      await p.select<'replace' | 'keep' | 'replace_all' | 'keep_all'>({
+        message: `Replace ${displayPath}?`,
+        options: [
+          { value: 'keep', label: 'Keep existing' },
+          { value: 'replace', label: 'Replace with incoming' },
+          { value: 'replace_all', label: 'Replace all remaining' },
+          { value: 'keep_all', label: 'Keep all remaining' },
+        ],
+      }),
+    );
+
+    if (perFile === 'replace') {
+      toReplace.add(action.absolutePath);
+    } else if (perFile === 'replace_all') {
+      for (let j = i; j < differing.length; j++) {
+        toReplace.add(differing[j].absolutePath);
+      }
+      break;
+    } else if (perFile === 'keep_all') {
+      break;
+    }
+  }
+
+  return toReplace;
+}
+
+export async function promptConfirmSyncDeletions(
+  deletePaths: string[],
+): Promise<boolean> {
+  if (deletePaths.length === 0) {
+    return true;
+  }
+  return assertNotCancelled(
+    await p.confirm({
+      message: `Sync will delete ${deletePaths.length} untouched file${deletePaths.length === 1 ? '' : 's'} removed upstream. Continue?`,
+      initialValue: true,
+    }),
+  );
+}
+
 export async function promptConfirmation(
   sourceLabel: string,
   targetFormats: FormatId[],
@@ -431,7 +537,7 @@ export async function promptConfirmation(
 
 /** No arguments: ask for everything, auto-detecting local skills & targets when present. */
 export async function runInteractiveWizard(): Promise<void> {
-  p.intro(pc.bgCyan(pc.black(' uniskill ')));
+  p.intro(pc.bgCyan(pc.black(' everyagent ')));
 
   let fetchResult;
   let detections: DetectionResult[];
@@ -542,13 +648,15 @@ export async function runInteractiveWizard(): Promise<void> {
   );
 
   let filteredPkg = pkg;
+  let selection: PackageSelection | undefined;
   if (shouldPromptTranslationScope(pkg)) {
-    const selection = await promptTranslationScope(pkg);
-    if (!selection) {
+    const picked = await promptTranslationScope(pkg);
+    if (!picked) {
       p.cancel('Aborted. No files were written.');
       return;
     }
-    filteredPkg = filterPackage(pkg, selection);
+    selection = picked;
+    filteredPkg = filterPackage(pkg, picked);
   }
 
   const detectedTargets = detectTargetFormats({
@@ -569,7 +677,7 @@ export async function runInteractiveWizard(): Promise<void> {
         { value: 'custom', label: 'Custom project path' },
         {
           value: 'global',
-          label: 'Global config directories (~/.claude, ~/.config/opencode, ~/.codex, ~/.cursor)',
+          label: 'Global config directories (~/.claude, ~/.config/opencode, ~/.codex, ~/.cursor, ~/.gemini/config)',
         },
       ],
     }),
@@ -598,6 +706,8 @@ export async function runInteractiveWizard(): Promise<void> {
   const selectionSummary = formatSelectionCounts(filteredPkg);
   let alreadyPreviewed = false;
   let actionChoice: WriteActionChoice = 'cancel';
+  let overwritePaths = new Set<string>();
+  let forceAll = false;
 
   while (true) {
     const { summary: preview } = convertAndWrite({
@@ -622,6 +732,12 @@ export async function runInteractiveWizard(): Promise<void> {
       return;
     }
 
+    if (preview.skipped > 0) {
+      overwritePaths = await promptConflictResolution(preview.actions, isGlobal);
+      actionChoice = 'write';
+      break;
+    }
+
     actionChoice = await promptWriteAction({
       sourceLabel: sourceName,
       targetFormats,
@@ -634,7 +750,9 @@ export async function runInteractiveWizard(): Promise<void> {
 
     if (actionChoice === 'dry_run') {
       for (const action of preview.actions) {
-        console.log(formatActionLine(action, isGlobal));
+        if (action.status !== 'unchanged') {
+          console.log(formatActionLine(action, isGlobal));
+        }
       }
       p.log.info(`Dry run: ${formatSummaryCounts(preview)}.`);
       alreadyPreviewed = true;
@@ -653,6 +771,7 @@ export async function runInteractiveWizard(): Promise<void> {
       continue;
     }
 
+    forceAll = actionChoice === 'force';
     break;
   }
 
@@ -661,20 +780,33 @@ export async function runInteractiveWizard(): Promise<void> {
     return;
   }
 
-  const { summary } = convertAndWrite({
+  const { summary, plannedTargets } = convertAndWrite({
     files: fetchResult!.files,
     pkg: filteredPkg,
     sourceFormat: chosenDetection.format,
     targetFormats,
     targetDir,
     global: isGlobal,
-    force: actionChoice === 'force',
+    force: forceAll,
+    overwrite: overwritePaths,
     subpathName: fetchResult!.subpathName,
     allowLoose: chosenDetection.allowLoose,
   });
 
+  recordManifestEntries({
+    targetDir,
+    global: isGlobal,
+    parsedSource: fetchResult!.source,
+    sourceFormat: chosenDetection.format,
+    selection,
+    plannedTargets,
+    summary,
+  });
+
   for (const action of summary.actions) {
-    console.log(formatActionLine(action, isGlobal));
+    if (action.status !== 'unchanged') {
+      console.log(formatActionLine(action, isGlobal));
+    }
   }
 
   if (summary.conflict > 0) {

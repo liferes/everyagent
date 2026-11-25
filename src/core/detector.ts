@@ -24,11 +24,19 @@ export interface TargetDetectionOptions {
 }
 
 const IGNORED_DIRS = new Set(['.git', 'node_modules', 'dist']);
-const KNOWN_CONFIG_DIRS = ['.cursor', '.claude', '.opencode', '.codex'] as const;
+const KNOWN_CONFIG_DIRS = [
+  '.cursor',
+  '.claude',
+  '.opencode',
+  '.codex',
+  '.agents',
+  '.agent',
+] as const;
 const KNOWN_ROOT_FILES = new Set([
   '.cursorrules',
   'CLAUDE.md',
   'AGENTS.md',
+  'GEMINI.md',
   'SKILL.md',
 ]);
 
@@ -91,6 +99,15 @@ export function detectTargetFormats(
           }
         } else if (id === 'codex') {
           if (existsSafe(path.join(resolvedDir, '.codex'))) {
+            projectFormats.push(id);
+          }
+        } else if (id === 'antigravity') {
+          // `.agents/` only. GEMINI.md is shared with Gemini CLI, so on its own
+          // it cannot say which tool the project belongs to.
+          if (
+            existsSafe(path.join(resolvedDir, '.agents')) ||
+            existsSafe(path.join(resolvedDir, '.agent'))
+          ) {
             projectFormats.push(id);
           }
         }

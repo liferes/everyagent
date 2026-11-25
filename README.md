@@ -1,25 +1,17 @@
-# uniskill
+# everyagent
 
-Point it at a skill repo, name the agent you use, and it lays the files out the way that agent expects. Cursor rules in, Claude skills out. Or OpenCode, or Codex. Any direction you need.
+Point it at a skill repo, name the agent you use, and it lays the files out the way that agent expects. Cursor rules in, Claude skills out. Or OpenCode, Codex, Antigravity. Any direction you need.
 
 Every source gets parsed into one intermediate shape and rebuilt for the target, which is how it avoids a converter for every format pair. Paths inside the markdown get rewritten on the way through: a `.cursor/scripts/` reference becomes `.claude/scripts/` when Claude is the destination, and the `.cursorrules` root file comes out as `CLAUDE.md`. Whatever sits next to a skill travels with it.
 
-Nothing on your disk gets overwritten unless you pass `--force`.
+Nothing on your disk gets overwritten without your say-so: `--force` up front, or the prompt that shows a diff and asks per file.
 
 ## Install
 
-Not on npm yet. Two ways in, both prebuilt, neither needs a compiler.
-
-Standalone file from [Releases](https://github.com/liferes/uniskill/releases/latest). Needs Node 18 or newer and nothing else:
+Not on npm yet. Install from GitHub:
 
 ```bash
-node uniskill-0.2.0.mjs owner/repo -t claude
-```
-
-Or install it from GitHub:
-
-```bash
-npm i -g --allow-git=all github:liferes/uniskill
+npm i -g --allow-git=all github:liferes/everyagent
 ```
 
 npm 12 blocks git installs by default, so that flag isn't optional. It ships prebuilt, so there's nothing to compile.
@@ -27,7 +19,7 @@ npm 12 blocks git installs by default, so that flag isn't optional. It ships pre
 Prefer it uninstalled:
 
 ```bash
-npx --yes --allow-git=all github:liferes/uniskill owner/repo -t claude
+npx --yes --allow-git=all github:liferes/everyagent owner/repo -t claude
 ```
 
 ## Usage
@@ -35,41 +27,48 @@ npx --yes --allow-git=all github:liferes/uniskill owner/repo -t claude
 Bare, with no arguments, it asks you questions:
 
 ```bash
-uniskill
+everyagent
 ```
 
 Give it everything up front and it skips the questions. First argument is the source, either `owner/repo` or a full URL:
 
 ```bash
-uniskill owner/repo -t claude
+everyagent owner/repo -t claude
 ```
 
 More of the same:
 
 ```bash
 # detect the source format, write into .claude/ here
-uniskill owner/repo -t claude
+everyagent owner/repo -t claude
 
 # full URL, custom directory, no confirmation prompt
-uniskill https://github.com/owner/repo -t opencode ./my-app -y
+everyagent https://github.com/owner/repo -t opencode ./my-app -y
 
 # pull one folder out of a monorepo
-uniskill owner/repo/tree/main/skills/ui -t codex
+everyagent owner/repo/tree/main/skills/ui -t codex
 
 # two targets in one pass
-uniskill owner/repo -t claude,opencode
+everyagent owner/repo -t claude,opencode
 
 # everything at once
-uniskill owner/repo -t all -y
+everyagent owner/repo -t all -y
 
 # straight into your user-level agent config
-uniskill owner/repo -t opencode -g
+everyagent owner/repo -t opencode -g
 
 # see what would happen, touch nothing
-uniskill owner/repo -t claude --dry-run
+everyagent owner/repo -t claude --dry-run
 
 # overwrite what's already there
-uniskill owner/repo -t cursor --force
+everyagent owner/repo -t cursor --force
+
+# sync, list, remove, lint
+everyagent sync
+everyagent sync --check
+everyagent list
+everyagent remove owner/repo
+everyagent lint
 ```
 
 ## Formats
@@ -80,19 +79,26 @@ uniskill owner/repo -t cursor --force
 | Claude Code | `.claude/skills/<name>/SKILL.md` | `CLAUDE.md` | `name`, `description`, `allowed-tools` | `~/.claude/` |
 | OpenCode | `.opencode/skills/<name>/SKILL.md` | `AGENTS.md` | `name`, `description` | `~/.config/opencode/` |
 | Codex CLI | `.codex/skills/<name>/SKILL.md` | `AGENTS.md` | `name`, `description` | `~/.codex/` |
+| Antigravity | `.agents/skills/<name>/SKILL.md` | `GEMINI.md` | `name`, `description` | `~/.gemini/config/` |
 
 ### Cursor is the odd one
 
 Cursor keeps rules as single `.mdc` files instead of a folder with a `SKILL.md` inside, so converting in that direction loses a bit of shape. Glob patterns have nowhere to live in `SKILL.md` frontmatter, so they get folded into the description as `(Applies to: ...)`. Going back the other way, `description` lands in the `.mdc` frontmatter and `alwaysApply` comes out as `false`.
 
+### Antigravity and its old folder name
+
+Antigravity used to keep skills in `.agent/` before moving to `.agents/`. Both get read, and the files come out under `.agents/` even when Antigravity is the target too. If a repo has a copy in each, the `.agents/` one wins.
+
+`GEMINI.md` is not a giveaway on its own, since Gemini CLI writes the same file. It only counts as Antigravity when `.agents/` or `.agent/` is there, or when you say `-f antigravity`. Otherwise a Claude project carrying a `GEMINI.md` stays a Claude project.
+
 ## Flags
 
 | Flag | What it does | Default |
 | :--- | :--- | :--- |
-| `-t, --to <targets>` | Target format(s): `claude`, `opencode`, `codex`, `cursor`, `all`. Comma-separated. | Prompted in a TTY |
+| `-t, --to <targets>` | Target format(s): `claude`, `opencode`, `codex`, `cursor`, `antigravity`, `all`. Comma-separated. | Prompted in a TTY |
 | `-s, --skill <names>` | Only these skills. Root rules and shared config assets are left out. Comma-separated or repeated. | All skills |
 | `-p, --path <dir>` | Destination project directory, or pass it as the second positional arg | `.` |
-| `-f, --from <format>` | Override source detection: `auto`, `cursor`, `claude`, `opencode`, `codex` | `auto` |
+| `-f, --from <format>` | Override source detection: `auto`, `cursor`, `claude`, `opencode`, `codex`, `antigravity` | `auto` |
 | `-g, --global` | Install into your user-level agent config directory | `false` |
 | `-y, --yes` | Skip the confirmation prompt | `false` |
 | `-d, --dry-run` | Print the plan without touching disk | `false` |
@@ -100,15 +106,33 @@ Cursor keeps rules as single `.mdc` files instead of a folder with a `SKILL.md` 
 | `-h, --help` | Print help | |
 | `-v, --version` | Print version | |
 
-## Skipping, and the one collision
+## Skipping, replacing, and the one collision
 
-Existing files get skipped, not replaced:
+Identical files already on disk stay quiet as `unchanged`. When existing files differ:
+
+- In a TTY without `--force`, `everyagent` asks whether to replace all differing files, review each one with a short diff, or keep them.
+- In non-TTY runs, `--yes`, or `--dry-run`, differing files are listed under `Differs on disk:` with a `--force` reminder and nothing is overwritten.
 
 ```text
-⚠ Skipped .claude/skills/react-hooks/SKILL.md (differs on disk)
+⚠ Differs on disk:
+  .claude/skills/react-hooks/SKILL.md
 ```
 
-`--dry-run` shows you the whole plan first, and `--force` overrides the skip.
+`--dry-run` shows you the whole plan first, and `--force` replaces every differing file.
+
+## Managing installed skills
+
+Every install records a manifest at `.everyagent/manifest.json` (or `~/.everyagent/manifest.json` with `-g`) containing the source, format, and SHA-256 hash of each installed file. A file you kept instead of replacing never enters the manifest, so `sync` leaves it alone and reports it as `Not tracked` rather than drift.
+
+```bash
+everyagent sync [dest]          # update untouched files, keep local edits, prune removed upstream files
+everyagent sync --check         # exit 1 if anything drifted (for CI)
+everyagent list [dest]          # show installed sources, formats, and local drift
+everyagent remove <source|--all> [dest]  # delete untouched files; refuse edited ones
+everyagent lint [source]        # check frontmatter, duplicates, naming, description length, links
+```
+
+`sync` and `list` accept `--json`. Exit codes: `0` clean, `1` on drift (`--check`), refusal, or lint errors, `2` on bad arguments.
 
 One case is worth knowing about. OpenCode and Codex both call their root rule `AGENTS.md`, but each rewrites internal paths for its own config directory, so the two copies differ. Convert to both in a single run and the second one loses:
 
@@ -120,8 +144,8 @@ One case is worth knowing about. OpenCode and Codex both call their root rule `A
 That counts as a conflict rather than a skip, since no file of yours was involved. Install them separately if you need both:
 
 ```bash
-uniskill owner/repo -t opencode
-uniskill owner/repo -t codex --force
+everyagent owner/repo -t opencode
+everyagent owner/repo -t codex --force
 ```
 
 Two skills that share the same `name:` would land on the same file. The run stops before writing anything instead of letting one silently win:
@@ -130,6 +154,10 @@ Two skills that share the same `name:` would land on the same file. The run stop
 ✖ Two source items both write ".claude/skills/review/SKILL.md" with different content.
   Rename one of them, or install them separately with --skill.
 ```
+
+## Changelog
+
+What changed in each release, back to the first one: [CHANGELOG.md](CHANGELOG.md).
 
 ## Development
 
@@ -144,10 +172,10 @@ To try the binary before installing it for real:
 
 ```bash
 npm link
-uniskill --help
+everyagent --help
 ```
 
-The 65 tests cover the 4x4 conversion matrix, the tar extractor, the writer's skip and conflict paths, skill-name sanitising, and the repo layouts that carry skills outside a config dir.
+The tests cover the 5x5 conversion matrix, the tar extractor, the writer's skip and conflict paths, the manifest and sync planners, and the repo layouts that carry skills outside a config dir.
 
 ## License
 

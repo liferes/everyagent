@@ -65,10 +65,28 @@ export function formatSummaryCounts(summary: WriteSummary): string {
 
 export function logWriteSummary(
   summary: WriteSummary,
-  options: { dryRun?: boolean; global?: boolean } = {},
+  options: { dryRun?: boolean; global?: boolean; showForceHint?: boolean } = {},
 ): void {
+  const skippedActions: WriteAction[] = [];
+
   for (const action of summary.actions) {
+    if (action.status === 'unchanged') {
+      continue;
+    }
+    if (action.status === 'skipped') {
+      skippedActions.push(action);
+      continue;
+    }
     console.log(formatActionLine(action, options.global));
+  }
+
+  if (skippedActions.length > 0) {
+    const prefix = options.dryRun ? `${pc.dim('[dry-run]')} ` : '';
+    console.log(`${prefix}${pc.yellow('⚠ Differs on disk:')}`);
+    for (const action of skippedActions) {
+      const displayPath = options.global ? action.absolutePath : action.relativePath;
+      console.log(`  ${displayPath}`);
+    }
   }
 
   const isAllUpToDate =
@@ -85,6 +103,12 @@ export function logWriteSummary(
       : 'Done!';
   console.log('');
   console.log(`${pc.bold(pc.green(verb))} ${formatSummaryCounts(summary)}.`);
+
+  if (skippedActions.length > 0 && options.showForceHint !== false) {
+    logWarn(
+      `${skippedActions.length} file${skippedActions.length === 1 ? '' : 's'} differ${skippedActions.length === 1 ? 's' : ''} on disk and ${skippedActions.length === 1 ? 'was' : 'were'} kept. Re-run with --force to replace ${skippedActions.length === 1 ? 'it' : 'them'}.`,
+    );
+  }
 
   if (summary.conflict > 0) {
     logWarn(

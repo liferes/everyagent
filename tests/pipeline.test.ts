@@ -13,7 +13,7 @@ import { parseCliArgs, parseTargetFormats } from '../src/cli/args.js';
 const FIXTURES_DIR = path.resolve(import.meta.dirname, 'fixtures');
 const tempDirs: string[] = [];
 
-function makeTempDir(prefix = 'uniskill-test-'): string {
+function makeTempDir(prefix = 'everyagent-test-'): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
@@ -70,14 +70,14 @@ afterEach(() => {
 
 describe('CLI argument parsing', () => {
   it('routes empty args to interactive mode', () => {
-    const res = parseCliArgs(['node', 'uniskill']);
+    const res = parseCliArgs(['node', 'everyagent']);
     expect(res).toEqual({ kind: 'interactive' });
   });
 
   it('parses one-liner positional destination and multi-targets', () => {
     const res = parseCliArgs([
       'node',
-      'uniskill',
+      'everyagent',
       'https://github.com/u/r',
       '-t',
       'claude,opencode',
@@ -104,6 +104,7 @@ describe('CLI argument parsing', () => {
       'cursor',
       'opencode',
       'codex',
+      'antigravity',
     ]);
   });
 });
@@ -171,6 +172,7 @@ describe('Gate 2: 4x4 Matrix Conversions & Translation Rules', () => {
     claude: path.join(FIXTURES_DIR, 'claude-repo'),
     opencode: path.join(FIXTURES_DIR, 'opencode-repo'),
     codex: path.join(FIXTURES_DIR, 'codex-repo'),
+    antigravity: path.join(FIXTURES_DIR, 'antigravity-repo'),
   };
 
   for (const sourceFormat of FORMAT_IDS) {
@@ -334,6 +336,18 @@ describe('Gate 2: 4x4 Matrix Conversions & Translation Rules', () => {
     expect(cursorEmitted.some((f) => f.relativePath.startsWith('.cursor/'))).toBe(
       false,
     );
+
+    const antigravityEmitted = getAdapter('antigravity').emit(pkg, {
+      global: true,
+    });
+    expect(
+      antigravityEmitted.some(
+        (f) => f.relativePath === 'skills/react-hooks/SKILL.md',
+      ),
+    ).toBe(true);
+    expect(
+      antigravityEmitted.some((f) => f.relativePath.startsWith('.agents/')),
+    ).toBe(false);
   });
 });
 

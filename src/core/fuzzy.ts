@@ -13,6 +13,11 @@ const FORMAT_ALIASES: Record<string, FormatId> = {
   cursor: 'cursor',
   cursorrules: 'cursor',
   mdc: 'cursor',
+  antigravity: 'antigravity',
+  agy: 'antigravity',
+  agents: 'antigravity',
+  agent: 'antigravity',
+  googleantigravity: 'antigravity',
 };
 
 /** Normalize a user token for forgiving matching (case, dots, hyphens, underscores, spaces). */

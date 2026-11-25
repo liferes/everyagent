@@ -10,7 +10,7 @@ import { writeEmittedFiles, type WriteOptions } from '../src/core/writer.js';
 const tempDirs: string[] = [];
 
 function makeTempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uniskill-regression-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'everyagent-regression-'));
   tempDirs.push(dir);
   return dir;
 }

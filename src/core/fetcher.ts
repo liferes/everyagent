@@ -139,6 +139,7 @@ export function parseGitHubSource(rawInput: string): ParsedSource {
         lowerFile.endsWith('.mdc') ||
         lowerFile === 'claude.md' ||
         lowerFile === 'agents.md' ||
+        lowerFile === 'gemini.md' ||
         lowerFile === '.cursorrules'
       ) {
         subpath = parentDir;
@@ -363,7 +364,7 @@ async function downloadGitHubTarball(
 ): Promise<Buffer> {
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   const headers: Record<string, string> = {
-    'User-Agent': 'uniskill-cli',
+    'User-Agent': 'everyagent-cli',
     Accept: 'application/vnd.github+json',
   };
 
@@ -386,7 +387,7 @@ async function downloadGitHubTarball(
       const response = await fetch(url, {
         headers: url.startsWith('https://api.github.com')
           ? headers
-          : { 'User-Agent': 'uniskill-cli' },
+          : { 'User-Agent': 'everyagent-cli' },
         redirect: 'follow',
       });
 

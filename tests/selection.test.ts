@@ -8,7 +8,7 @@ import {
   formatPackageOverview,
   formatSelectionCounts,
 } from '../src/cli/prompts.js';
-import type { UniskillPackage } from '../src/core/ir.js';
+import type { EveryagentPackage } from '../src/core/ir.js';
 import {
   convertAndWrite,
   fetchAndDetect,
@@ -20,7 +20,7 @@ const FIXTURES_DIR = path.resolve(import.meta.dirname, 'fixtures');
 const CURSOR_FIXTURE = path.join(FIXTURES_DIR, 'cursor-repo');
 const tempDirs: string[] = [];
 
-function makeTempDir(prefix = 'uniskill-selection-'): string {
+function makeTempDir(prefix = 'everyagent-selection-'): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
@@ -37,7 +37,7 @@ describe('CLI skill selection (--skill / -s)', () => {
   it('parses a single skill and comma-separated skills', () => {
     const single = parseCliArgs([
       'node',
-      'uniskill',
+      'everyagent',
       'owner/repo',
       '-t',
       'claude',
@@ -53,7 +53,7 @@ describe('CLI skill selection (--skill / -s)', () => {
 
     const multi = parseCliArgs([
       'node',
-      'uniskill',
+      'everyagent',
       'owner/repo',
       '--skill',
       'api-design, react-hooks',
@@ -67,7 +67,7 @@ describe('CLI skill selection (--skill / -s)', () => {
   it('supports repeated --skill flags and deduplicates case-insensitively', () => {
     const parsed = parseCliArgs([
       'node',
-      'uniskill',
+      'everyagent',
       'owner/repo',
       '-s',
       'api-design,React-Hooks',
@@ -85,7 +85,7 @@ describe('CLI skill selection (--skill / -s)', () => {
       /Skill selection cannot be empty/,
     );
     expect(() =>
-      parseCliArgs(['node', 'uniskill', '-s', 'api-design']),
+      parseCliArgs(['node', 'everyagent', '-s', 'api-design']),
     ).toThrow(/Missing source repository or path/);
   });
 });
@@ -192,7 +192,7 @@ describe('parseDetectedPackage & filterPackage', () => {
       }),
     ).toThrow(/Nothing selected to translate/);
 
-    const noSkillsPkg: UniskillPackage = {
+    const noSkillsPkg: EveryagentPackage = {
       ...pkg,
       skills: [],
     };

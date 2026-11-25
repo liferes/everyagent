@@ -2,7 +2,7 @@ import { detectFormats, getAdapter } from '../adapters/registry.js';
 import type { DetectionResult } from '../adapters/types.js';
 import { fetchSource, type FetchResult } from './fetcher.js';
 import { findClosestMatches, normalizeToken } from './fuzzy.js';
-import type { FormatId, Skill, SourceFile, UniskillPackage } from './ir.js';
+import type { FormatId, Skill, SourceFile, EveryagentPackage } from './ir.js';
 import { FORMAT_META, normalizePosixPath, type EmittedFile } from './ir.js';
 import { rewritePackage } from './rewriter.js';
 import { writeEmittedFiles, type WriteSummary } from './writer.js';
@@ -31,13 +31,21 @@ export interface ConvertAndWriteOptions {
   dryRun?: boolean;
   subpathName?: string;
   allowLoose?: boolean;
-  pkg?: UniskillPackage;
+  pkg?: EveryagentPackage;
   selection?: PackageSelection;
+  overwrite?: ReadonlySet<string>;
+}
+
+export interface PlannedTargetOutput {
+  targetFormat: FormatId;
+  destination: string;
+  files: EmittedFile[];
 }
 
 export interface ConvertAndWriteResult {
-  pkg: UniskillPackage;
+  pkg: EveryagentPackage;
   summary: WriteSummary;
+  plannedTargets: PlannedTargetOutput[];
 }
 
 /** Fetch first, then let each adapter say what it recognises. */
@@ -77,7 +85,7 @@ export async function fetchAndDetect(
 
   if (detections.length === 0) {
     throw new Error(
-      `Could not detect any supported skill format (.cursor, .claude, .opencode, .codex) in "${fetchResult.source.displayLabel}".`,
+      `Could not detect any supported skill format (.cursor, .claude, .opencode, .codex, .agents) in "${fetchResult.source.displayLabel}".`,
     );
   }
 
@@ -89,7 +97,7 @@ export function parseDetectedPackage(
   files: SourceFile[],
   detection: DetectionResult,
   subpathName?: string,
-): UniskillPackage {
+): EveryagentPackage {
   return getAdapter(detection.format).parse(files, {
     subpathName,
     allowLoose: detection.allowLoose,
@@ -97,7 +105,7 @@ export function parseDetectedPackage(
 }
 
 /** Only prompt the user to pick items when there is more than one selectable choice. */
-export function shouldPromptTranslationScope(pkg: UniskillPackage): boolean {
+export function shouldPromptTranslationScope(pkg: EveryagentPackage): boolean {
   const totalChoices =
     pkg.skills.length +
     (pkg.rootRules.length > 0 ? 1 : 0) +
@@ -107,9 +115,9 @@ export function shouldPromptTranslationScope(pkg: UniskillPackage): boolean {
 
 /** Narrow a parsed package down to selected skills, root rules, and shared assets. */
 export function filterPackage(
-  pkg: UniskillPackage,
+  pkg: EveryagentPackage,
   selection?: PackageSelection,
-): UniskillPackage {
+): EveryagentPackage {
   if (!selection) {
     return pkg;
   }
@@ -266,16 +274,24 @@ export function convertAndWrite(
   };
 
   const seenPaths = new Map<string, Buffer>();
+  const plannedTargets: PlannedTargetOutput[] = [];
 
   for (const { targetFormat, emitted } of planned) {
     const destination = options.global
       ? getAdapter(targetFormat).getGlobalDir()
       : options.targetDir;
 
+    plannedTargets.push({
+      targetFormat,
+      destination,
+      files: emitted,
+    });
+
     const result = writeEmittedFiles(emitted, destination, {
       force: options.force,
       dryRun: options.dryRun,
       seenPaths,
+      overwrite: options.overwrite,
     });
 
     combined.created += result.created;
@@ -287,5 +303,5 @@ export function convertAndWrite(
     combined.actions.push(...result.actions);
   }
 
-  return { pkg, summary: combined };
+  return { pkg, summary: combined, plannedTargets };
 }

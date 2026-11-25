@@ -3,6 +3,13 @@ import pkg from '../../package.json' with { type: 'json' };
 import { resolveFormatAlias, suggestFormat } from '../core/fuzzy.js';
 import { FORMAT_IDS, type FormatId } from '../core/ir.js';
 
+export class CliUsageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CliUsageError';
+  }
+}
+
 export type CliParseResult =
   | { kind: 'help_or_version' }
   | { kind: 'interactive' }
@@ -18,6 +25,35 @@ export type CliParseResult =
       dryRun: boolean;
       force: boolean;
     }
+  | {
+      kind: 'sync';
+      targetDir: string;
+      global: boolean;
+      yes: boolean;
+      dryRun: boolean;
+      check: boolean;
+      json: boolean;
+    }
+  | {
+      kind: 'list';
+      targetDir: string;
+      global: boolean;
+      json: boolean;
+    }
+  | {
+      kind: 'remove';
+      source?: string;
+      all: boolean;
+      targetDir: string;
+      global: boolean;
+      dryRun: boolean;
+    }
+  | {
+      kind: 'lint';
+      source: string;
+      from: FormatId | 'auto';
+      json: boolean;
+    };
 
 export function parseTargetFormats(raw: string): FormatId[] {
   const tokens = raw
@@ -26,7 +62,7 @@ export function parseTargetFormats(raw: string): FormatId[] {
     .filter(Boolean);
 
   if (tokens.length === 0) {
-    throw new Error('Target format cannot be empty. Expected: claude, opencode, codex, cursor, or all.');
+    throw new CliUsageError('Target format cannot be empty. Expected: claude, opencode, codex, cursor, antigravity, or all.');
   }
 
   const resolved: FormatId[] = [];
@@ -43,7 +79,7 @@ export function parseTargetFormats(raw: string): FormatId[] {
     const fmt = resolveFormatAlias(token);
     if (!fmt) {
       const suggestion = suggestFormat(token);
-      throw new Error(
+      throw new CliUsageError(
         `Unsupported target format "${token}".${suggestion ? ` Did you mean "${suggestion}"?` : ''} Valid targets: ${FORMAT_IDS.join(', ')}, all.`,
       );
     }
@@ -65,7 +101,7 @@ export function parseSourceFormat(raw?: string): FormatId | 'auto' {
   const resolved = resolveFormatAlias(value);
   if (!resolved) {
     const suggestion = suggestFormat(value);
-    throw new Error(
+    throw new CliUsageError(
       `Unsupported source format "${value}".${suggestion ? ` Did you mean "${suggestion}"?` : ''} Valid formats: auto, ${FORMAT_IDS.join(', ')}.`,
     );
   }
@@ -94,7 +130,7 @@ export function parseSkillSelection(raw: unknown): string[] {
   }
 
   if (resolved.length === 0) {
-    throw new Error(
+    throw new CliUsageError(
       'Skill selection cannot be empty. Provide one or more comma-separated skill names.',
     );
   }
@@ -102,8 +138,143 @@ export function parseSkillSelection(raw: unknown): string[] {
   return resolved;
 }
 
+function resolveExplicitPath(
+  argv: string[],
+  opts: Record<string, unknown>,
+  positionalDest?: string,
+): string {
+  const explicitPathFlag =
+    argv.includes('-p') ||
+    argv.includes('--path') ||
+    argv.some((a) => a.startsWith('--path='));
+
+  return explicitPathFlag
+    ? String(opts.path ?? '.')
+    : (positionalDest ?? String(opts.path ?? '.'));
+}
+
+function parseSubcommand(
+  subcmd: 'sync' | 'list' | 'remove' | 'lint',
+  argv: string[],
+): CliParseResult {
+  const subArgv = [argv[0], argv[1], ...argv.slice(3)];
+  const cli = cac(`everyagent ${subcmd}`);
+
+  if (subcmd === 'sync') {
+    cli
+      .command('[dest]', 'Re-fetch and update installed skills without overwriting local edits')
+      .option('-p, --path <dir>', 'Project directory', { default: '.' })
+      .option('-g, --global', 'Sync global manifest (~/.everyagent/manifest.json)')
+      .option('-y, --yes', 'Confirm deletions without prompting')
+      .option('-d, --dry-run', 'Preview sync changes without touching disk')
+      .option('--check', 'Exit with code 1 if any tracked file or source has drifted')
+      .option('--json', 'Output sync report as JSON');
+    cli.help();
+    const parsed = cli.parse(subArgv, { run: false });
+    const opts = parsed.options as Record<string, unknown>;
+    if (opts.help || opts.version) return { kind: 'help_or_version' };
+    if (parsed.args.length > 1) {
+      throw new CliUsageError(`Unexpected argument "${parsed.args[1]}" for sync.`);
+    }
+    return {
+      kind: 'sync',
+      targetDir: resolveExplicitPath(subArgv, opts, parsed.args[0]),
+      global: Boolean(opts.global),
+      yes: Boolean(opts.yes),
+      dryRun: Boolean(opts.dryRun),
+      check: Boolean(opts.check),
+      json: Boolean(opts.json),
+    };
+  }
+
+  if (subcmd === 'list') {
+    cli
+      .command('[dest]', 'List installed skills and check for drift')
+      .option('-p, --path <dir>', 'Project directory', { default: '.' })
+      .option('-g, --global', 'List global manifest (~/.everyagent/manifest.json)')
+      .option('--json', 'Output installed list as JSON');
+    cli.help();
+    const parsed = cli.parse(subArgv, { run: false });
+    const opts = parsed.options as Record<string, unknown>;
+    if (opts.help || opts.version) return { kind: 'help_or_version' };
+    if (parsed.args.length > 1) {
+      throw new CliUsageError(`Unexpected argument "${parsed.args[1]}" for list.`);
+    }
+    return {
+      kind: 'list',
+      targetDir: resolveExplicitPath(subArgv, opts, parsed.args[0]),
+      global: Boolean(opts.global),
+      json: Boolean(opts.json),
+    };
+  }
+
+  if (subcmd === 'remove') {
+    cli
+      .command('[source] [dest]', 'Remove untouched files installed from a source')
+      .option('--all', 'Remove all tracked installs in the manifest')
+      .option('-p, --path <dir>', 'Project directory', { default: '.' })
+      .option('-g, --global', 'Remove from global manifest (~/.everyagent/manifest.json)')
+      .option('-d, --dry-run', 'Preview removals without touching disk');
+    cli.help();
+    const parsed = cli.parse(subArgv, { run: false });
+    const opts = parsed.options as Record<string, unknown>;
+    if (opts.help || opts.version) return { kind: 'help_or_version' };
+    const all = Boolean(opts.all);
+    const source = all ? undefined : parsed.args[0];
+    const destArg = all ? parsed.args[0] : parsed.args[1];
+    if (!all && !source) {
+      throw new CliUsageError(
+        'Missing source for remove. Specify <source> or --all.',
+      );
+    }
+    if ((all && parsed.args.length > 1) || (!all && parsed.args.length > 2)) {
+      throw new CliUsageError('Too many arguments for remove.');
+    }
+    return {
+      kind: 'remove',
+      ...(source ? { source } : {}),
+      all,
+      targetDir: resolveExplicitPath(subArgv, opts, destArg),
+      global: Boolean(opts.global),
+      dryRun: Boolean(opts.dryRun),
+    };
+  }
+
+  cli
+    .command('[source]', 'Check skills for frontmatter, naming, and link issues')
+    .option(
+      '-f, --from <format>',
+      'Override source auto-detection (auto, cursor, claude, opencode, codex, antigravity)',
+      { default: 'auto' },
+    )
+    .option('--json', 'Output lint findings as JSON');
+  cli.help();
+  const parsed = cli.parse(subArgv, { run: false });
+  const opts = parsed.options as Record<string, unknown>;
+  if (opts.help || opts.version) return { kind: 'help_or_version' };
+  if (parsed.args.length > 1) {
+    throw new CliUsageError(`Unexpected argument "${parsed.args[1]}" for lint.`);
+  }
+  return {
+    kind: 'lint',
+    source: parsed.args[0] ?? '.',
+    from: parseSourceFormat(typeof opts.from === 'string' ? opts.from : undefined),
+    json: Boolean(opts.json),
+  };
+}
+
 export function parseCliArgs(argv: string[]): CliParseResult {
-  const cli = cac('uniskill');
+  const firstArg = argv[2];
+  if (
+    firstArg === 'sync' ||
+    firstArg === 'list' ||
+    firstArg === 'remove' ||
+    firstArg === 'lint'
+  ) {
+    return parseSubcommand(firstArg, argv);
+  }
+
+  const cli = cac('everyagent');
 
   cli
     .command(
@@ -112,7 +283,7 @@ export function parseCliArgs(argv: string[]): CliParseResult {
     )
     .option(
       '-t, --to <targets>',
-      'Target format(s): claude, opencode, codex, cursor, or all',
+      'Target format(s): claude, opencode, codex, cursor, antigravity, or all',
     )
     .option(
       '-s, --skill <names>',
@@ -123,21 +294,20 @@ export function parseCliArgs(argv: string[]): CliParseResult {
     })
     .option(
       '-f, --from <format>',
-      'Override source auto-detection (auto, cursor, claude, opencode, codex)',
+      'Override source auto-detection (auto, cursor, claude, opencode, codex, antigravity)',
       { default: 'auto' },
     )
     .option('-g, --global', 'Install to user global agent config directory')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('-d, --dry-run', 'Preview planned actions without writing files')
     .option('--force', 'Overwrite existing files instead of skipping')
-    .example('uniskill')
-    .example('uniskill owner/repo -t claude')
-    .example('uniskill owner/repo -t claude -s react-hooks,api-design')
-    .example('uniskill https://github.com/u/r -t opencode ./app -y')
-    .example('uniskill owner/repo/tree/main/skills/ui -t codex')
-    .example('uniskill owner/repo -t claude,opencode,codex')
-    .example('uniskill owner/repo -t opencode -g')
-    .example('uniskill owner/repo -t claude --dry-run');
+    .example('everyagent')
+    .example('everyagent owner/repo -t claude')
+    .example('everyagent owner/repo -t claude -s react-hooks,api-design')
+    .example('everyagent https://github.com/u/r -t opencode ./app -y')
+    .example('everyagent sync')
+    .example('everyagent list')
+    .example('everyagent remove owner/repo');
 
   cli.help();
   cli.version(pkg.version);
@@ -168,8 +338,8 @@ export function parseCliArgs(argv: string[]): CliParseResult {
   }
 
   if (!sourceArg) {
-    throw new Error(
-      'Missing source repository or path. Run `uniskill` with no arguments for the interactive wizard, or `uniskill --help` for usage.',
+    throw new CliUsageError(
+      'Missing source repository or path. Run `everyagent` with no arguments for the interactive wizard, or `everyagent --help` for usage.',
     );
   }
 
@@ -181,14 +351,7 @@ export function parseCliArgs(argv: string[]): CliParseResult {
   const skills =
     opts.skill !== undefined ? parseSkillSelection(opts.skill) : undefined;
 
-  const explicitPathFlag =
-    argv.includes('-p') ||
-    argv.includes('--path') ||
-    argv.some((a) => a.startsWith('--path='));
-
-  const targetDir = explicitPathFlag
-    ? String(opts.path ?? '.')
-    : (destArg ?? String(opts.path ?? '.'));
+  const targetDir = resolveExplicitPath(argv, opts, destArg);
 
   return {
     kind: 'command',

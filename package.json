@@ -1,22 +1,22 @@
 {
-  "name": "uniskill",
-  "version": "0.2.0",
-  "description": "Convert and install AI-agent skills between Cursor, Claude Code, OpenCode, and Codex CLI",
+  "name": "everyagent",
+  "version": "1.1.0",
+  "description": "Convert and install AI-agent skills between Cursor, Claude Code, OpenCode, Codex CLI, and Antigravity",
   "author": "liferes",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/liferes/uniskill.git"
+    "url": "git+https://github.com/liferes/everyagent.git"
   },
-  "homepage": "https://github.com/liferes/uniskill#readme",
+  "homepage": "https://github.com/liferes/everyagent#readme",
   "bugs": {
-    "url": "https://github.com/liferes/uniskill/issues"
+    "url": "https://github.com/liferes/everyagent/issues"
   },
   "type": "module",
   "engines": {
     "node": ">=18.0.0"
   },
   "bin": {
-    "uniskill": "dist/index.js"
+    "everyagent": "dist/index.js"
   },
   "files": [
     "dist",

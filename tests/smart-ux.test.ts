@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { afterEach, describe, expect, it } from 'vitest';
+import { detectFormats, getAdapter } from '../src/adapters/registry.js';
 import { parseSourceFormat, parseTargetFormats } from '../src/cli/args.js';
 import { formatActionLine, formatSummaryCounts } from '../src/cli/logger.js';
 import {
@@ -10,8 +11,9 @@ import {
   detectTargetFormats,
 } from '../src/core/detector.js';
 import { extractTarGz, parseGitHubSource } from '../src/core/fetcher.js';
-import type { FormatId, UniskillPackage } from '../src/core/ir.js';
+import type { FormatId, SourceFile, EveryagentPackage } from '../src/core/ir.js';
 import {
+  convertAndWrite,
   filterPackage,
   shouldPromptTranslationScope,
 } from '../src/core/pipeline.js';
@@ -19,7 +21,7 @@ import { writeEmittedFiles } from '../src/core/writer.js';
 
 const tempDirs: string[] = [];
 
-function makeTempDir(prefix = 'uniskill-smart-'): string {
+function makeTempDir(prefix = 'everyagent-smart-'): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
@@ -292,7 +294,7 @@ describe('Feature 3: Unchanged vs changed file detection', () => {
 });
 
 describe('Feature 4: Skip translation scope prompt when only 1 choice exists', () => {
-  const basePkg: UniskillPackage = {
+  const basePkg: EveryagentPackage = {
     sourceFormat: 'claude',
     sourceLabel: 'Claude Code (.claude/)',
     skills: [
@@ -378,7 +380,7 @@ describe('Feature 6: Forgiving aliases and typo suggestions', () => {
   });
 
   it('matches normalized skill names and suggests closest skills on typo', () => {
-    const pkg: UniskillPackage = {
+    const pkg: EveryagentPackage = {
       sourceFormat: 'cursor',
       sourceLabel: 'Cursor (.cursor/)',
       skills: [
@@ -400,5 +402,237 @@ describe('Feature 6: Forgiving aliases and typo suggestions', () => {
     expect(() =>
       filterPackage(pkg, { skillNames: ['react-hook'] }),
     ).toThrow(/Did you mean: react-hooks\? Available skills: api-design, react-hooks/);
+  });
+});
+
+describe('Antigravity adapter & smart UX', () => {
+  it('treats .agents/ and .agent/ as antigravity, but not a bare GEMINI.md', () => {
+    const dirAgents = makeTempDir('agy-agents-');
+    fs.mkdirSync(path.join(dirAgents, '.agents', 'skills', 'audit'), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(dirAgents, '.agents', 'skills', 'audit', 'SKILL.md'),
+      '---\nname: audit\ndescription: audit code\n---\nhello\n',
+    );
+
+    expect(
+      detectTargetFormats({
+        targetDir: dirAgents,
+        globalDirResolver: () => path.join(dirAgents, 'nonexistent'),
+      }),
+    ).toEqual({ formats: ['antigravity'], scope: 'project' });
+
+    const localAgents = detectLocalProjectSource(dirAgents);
+    expect(localAgents).not.toBeNull();
+    expect(localAgents!.detections.map((d) => d.format)).toEqual(['antigravity']);
+
+    const dirSingular = makeTempDir('agy-agent-');
+    fs.mkdirSync(path.join(dirSingular, '.agent', 'skills', 'helper'), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(dirSingular, '.agent', 'skills', 'helper', 'SKILL.md'),
+      '---\nname: helper\ndescription: singular agent dir\n---\nbody\n',
+    );
+    fs.writeFileSync(path.join(dirSingular, 'GEMINI.md'), '# gemini rules\n');
+
+    expect(
+      detectTargetFormats({
+        targetDir: dirSingular,
+        globalDirResolver: () => path.join(dirSingular, 'nonexistent'),
+      }),
+    ).toEqual({ formats: ['antigravity'], scope: 'project' });
+
+    const localSingular = detectLocalProjectSource(dirSingular);
+    expect(localSingular).not.toBeNull();
+    expect(localSingular!.detections.map((d) => d.format)).toEqual([
+      'antigravity',
+    ]);
+
+    // Gemini CLI also writes GEMINI.md, so the file alone picks nothing.
+    const dirGemini = makeTempDir('agy-gemini-');
+    fs.writeFileSync(path.join(dirGemini, 'GEMINI.md'), '# gemini rules\n');
+    expect(
+      detectTargetFormats({
+        targetDir: dirGemini,
+        globalDirResolver: () => path.join(dirGemini, 'nonexistent'),
+      }),
+    ).toEqual({ formats: [], scope: 'none' });
+  });
+
+  it('converts singular .agent/ workspaces and rewrites .agent/ references to target format', () => {
+    const outDir = makeTempDir('agy-convert-');
+    const files: SourceFile[] = [
+      {
+        path: '.agent/skills/deploy/SKILL.md',
+        content: Buffer.from(
+          '---\nname: deploy\ndescription: deploy app\n---\nRun `.agent/skills/deploy/scripts/run.sh` and check `GEMINI.md`.\n',
+          'utf8',
+        ),
+      },
+      {
+        path: '.agent/skills/deploy/scripts/run.sh',
+        content: Buffer.from('echo .agent/skills/deploy/\n', 'utf8'),
+      },
+      {
+        path: 'GEMINI.md',
+        content: Buffer.from('Use `.agent/scripts/shared.sh`.\n', 'utf8'),
+      },
+    ];
+
+    const detections = detectFormats(files);
+    expect(detections.map((d) => d.format)).toEqual(['antigravity']);
+
+    const { summary } = convertAndWrite({
+      files,
+      sourceFormat: 'antigravity',
+      targetFormats: ['claude'],
+      targetDir: outDir,
+    });
+
+    expect(summary.created).toBe(3);
+    const skillMd = fs.readFileSync(
+      path.join(outDir, '.claude', 'skills', 'deploy', 'SKILL.md'),
+      'utf8',
+    );
+    expect(skillMd).toContain('.claude/skills/deploy/scripts/run.sh');
+    expect(skillMd).toContain('CLAUDE.md');
+    expect(skillMd).not.toContain('.agent/');
+
+    const claudeMd = fs.readFileSync(path.join(outDir, 'CLAUDE.md'), 'utf8');
+    expect(claudeMd).toContain('.claude/scripts/shared.sh');
+  });
+
+  it('renames legacy .agent/ to .agents/ even when antigravity is both source and target', () => {
+    const outDir = makeTempDir('agy-identity-');
+    const files: SourceFile[] = [
+      {
+        path: '.agent/skills/legacy/SKILL.md',
+        content: Buffer.from(
+          '---\nname: legacy\ndescription: legacy skill\n---\nSee `.agent/skills/legacy/ref.md`.\n',
+          'utf8',
+        ),
+      },
+      {
+        path: '.agent/skills/legacy/ref.md',
+        content: Buffer.from('ref body\n', 'utf8'),
+      },
+    ];
+
+    const { summary } = convertAndWrite({
+      files,
+      sourceFormat: 'antigravity',
+      targetFormats: ['antigravity'],
+      targetDir: outDir,
+    });
+
+    expect(summary.created).toBe(2);
+    const skillMd = fs.readFileSync(
+      path.join(outDir, '.agents', 'skills', 'legacy', 'SKILL.md'),
+      'utf8',
+    );
+    expect(skillMd).toContain('.agents/skills/legacy/ref.md');
+  });
+
+  it('keeps the canonical .agents/ copy when the same skill also exists under .agent/', () => {
+    const files: SourceFile[] = [
+      {
+        path: '.agent/skills/dup/SKILL.md',
+        content: Buffer.from(
+          '---\nname: dup\ndescription: legacy copy\n---\nlegacy body\n',
+          'utf8',
+        ),
+      },
+      {
+        path: '.agents/skills/dup/SKILL.md',
+        content: Buffer.from(
+          '---\nname: dup\ndescription: canonical copy\n---\ncanonical body\n',
+          'utf8',
+        ),
+      },
+    ];
+
+    const detections = detectFormats(files);
+    expect(detections).toHaveLength(1);
+
+    const pkg = getAdapter('antigravity').parse(files);
+    expect(pkg.skills).toHaveLength(1);
+    expect(pkg.skills[0].description).toBe('canonical copy');
+    expect(pkg.skills[0].body.trim()).toBe('canonical body');
+  });
+
+  it('parses loose skills/<name>/SKILL.md repositories including companion assets', () => {
+    const outDir = makeTempDir('agy-loose-');
+    const files: SourceFile[] = [
+      {
+        path: 'skills/fastapi-pro/SKILL.md',
+        content: Buffer.from(
+          '---\nname: fastapi-pro\ndescription: FastAPI patterns\n---\nUse resources/guide.md\n',
+          'utf8',
+        ),
+      },
+      {
+        path: 'skills/fastapi-pro/resources/guide.md',
+        content: Buffer.from('# FastAPI Guide\n', 'utf8'),
+      },
+    ];
+
+    const detections = detectFormats(files);
+    expect(detections).toHaveLength(1);
+    expect(detections[0].allowLoose).toBe(true);
+
+    const { summary } = convertAndWrite({
+      files,
+      sourceFormat: detections[0].format,
+      targetFormats: ['antigravity'],
+      targetDir: outDir,
+      allowLoose: detections[0].allowLoose,
+    });
+
+    expect(summary.created).toBe(2);
+    expect(
+      fs.existsSync(
+        path.join(outDir, '.agents', 'skills', 'fastapi-pro', 'SKILL.md'),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(
+          outDir,
+          '.agents',
+          'skills',
+          'fastapi-pro',
+          'resources',
+          'guide.md',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it('supports antigravity aliases, typo suggestions, and /blob/main/GEMINI.md URLs', () => {
+    expect(
+      parseTargetFormats('antigravity, agy, .agents, .agent'),
+    ).toEqual(['antigravity']);
+    // Gemini CLI is a different tool with its own `.gemini/` layout.
+    expect(() => parseTargetFormats('gemini')).toThrow(
+      /Unsupported target format "gemini"/,
+    );
+    expect(parseSourceFormat('agy')).toBe('antigravity');
+    expect(() => parseTargetFormats('antigravty')).toThrow(
+      /Did you mean "antigravity"\?/,
+    );
+
+    expect(
+      parseGitHubSource('https://github.com/acme/repo/blob/main/GEMINI.md'),
+    ).toEqual({
+      type: 'github',
+      owner: 'acme',
+      repo: 'repo',
+      ref: 'main',
+      subpath: undefined,
+      fileFilter: 'GEMINI.md',
+      displayLabel: 'acme/repo/GEMINI.md',
+    });
   });
 });

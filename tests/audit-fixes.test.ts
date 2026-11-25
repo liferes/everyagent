@@ -11,7 +11,7 @@ import type { SourceFile } from '../src/core/ir.js';
 const tempDirs: string[] = [];
 
 function makeTempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uniskill-audit-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'everyagent-audit-'));
   tempDirs.push(dir);
   return dir;
 }

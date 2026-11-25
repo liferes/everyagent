@@ -7,7 +7,7 @@ import {
   type RootRule,
   type Skill,
   type SourceFile,
-  type UniskillPackage,
+  type EveryagentPackage,
 } from '../core/ir.js';
 import {
   normalizeGlobs,
@@ -95,10 +95,10 @@ export const cursorAdapter: Adapter = {
     };
   },
 
-  parse(files: SourceFile[], options?: ParseOptions): UniskillPackage {
+  parse(files: SourceFile[], options?: ParseOptions): EveryagentPackage {
     const skillsByName = new Map<string, Skill>();
     const rootRules: RootRule[] = [];
-    const sharedAssets: UniskillPackage['sharedAssets'] = [];
+    const sharedAssets: EveryagentPackage['sharedAssets'] = [];
 
     const mdcFiles: Array<{ skillName: string; file: SourceFile }> = [];
 
@@ -200,7 +200,7 @@ export const cursorAdapter: Adapter = {
     };
   },
 
-  emit(pkg: UniskillPackage, options?: EmitOptions): EmittedFile[] {
+  emit(pkg: EveryagentPackage, options?: EmitOptions): EmittedFile[] {
     const isGlobal = Boolean(options?.global);
     const basePrefix = isGlobal ? '' : CONFIG_PREFIX;
     const emitted: EmittedFile[] = [];
