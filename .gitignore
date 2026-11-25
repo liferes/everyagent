@@ -3,8 +3,16 @@ coverage/
 
 *.log
 *.tsbuildinfo
+*.tgz
+*.local
 .env
 .env.*
+
+/.everyagent/
+/.vscode/
+/.idea/
+/.tmp/
+/tmp/
 
 .DS_Store
 Thumbs.db
