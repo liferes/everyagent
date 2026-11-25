@@ -8,7 +8,15 @@ Nothing on your disk gets overwritten unless you pass `--force`.
 
 ## Install
 
-Not on npm yet. Install from GitHub:
+Not on npm yet. Two ways in, both prebuilt, neither needs a compiler.
+
+Standalone file from [Releases](https://github.com/liferes/uniskill/releases/latest). Needs Node 18 or newer and nothing else:
+
+```bash
+node uniskill-0.2.0.mjs owner/repo -t claude
+```
+
+Or install it from GitHub:
 
 ```bash
 npm i -g --allow-git=all github:liferes/uniskill
