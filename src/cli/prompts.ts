@@ -294,12 +294,12 @@ export async function promptTargetFormatSelection(
         {
           value: 'all_other',
           label: 'All other formats',
-          hint: otherFormats.map((id) => FORMAT_META[id].configDir).join(', '),
+          hint: `${otherFormats.length} other formats`,
         },
         {
           value: 'all',
           label: 'All formats',
-          hint: FORMAT_IDS.map((id) => FORMAT_META[id].configDir).join(', '),
+          hint: `all ${FORMAT_IDS.length} formats`,
         },
         ...FORMAT_IDS.map((id) => {
           const hint = formatHints(id);
@@ -715,7 +715,8 @@ export async function runInteractiveWizard(): Promise<void> {
         { value: 'custom', label: 'Custom project path' },
         {
           value: 'global',
-          label: 'Global config directories (~/.claude, ~/.config/opencode, ~/.codex, ~/.cursor, ~/.gemini/config)',
+          label: 'Global config directories',
+          hint: 'user home folders for selected agents',
         },
       ],
     }),
@@ -853,5 +854,6 @@ export async function runInteractiveWizard(): Promise<void> {
     );
   }
 
+  p.log.info(pc.dim('Always double-check the output in case some skills were not detected.'));
   p.outro(`${pc.green('Done!')} ${formatSummaryCounts(summary)}.`);
 }

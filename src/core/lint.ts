@@ -24,6 +24,10 @@ const MAX_DESCRIPTION_LEN: Record<FormatId, number> = {
   opencode: 1024,
   codex: 1024,
   antigravity: 1024,
+  windsurf: 1024,
+  copilot: 1024,
+  cline: 1024,
+  roo: 1024,
 };
 
 const VALID_SKILL_NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
@@ -69,7 +73,9 @@ export function lintSourceFiles(
       format === 'cursor'
         ? p.endsWith('.mdc') &&
           (p.startsWith('.cursor/rules/') || Boolean(options?.allowLoose))
-        : p === 'SKILL.md' || p.endsWith('/SKILL.md');
+        : format === 'copilot' && !options?.allowLoose
+          ? p.startsWith('.github/skills/') && p.endsWith('/SKILL.md')
+          : p === 'SKILL.md' || p.endsWith('/SKILL.md');
     if (isEntry) {
       entryFiles.push(file);
     }

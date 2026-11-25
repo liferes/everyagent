@@ -106,6 +106,10 @@ describe('CLI argument parsing', () => {
       'opencode',
       'codex',
       'antigravity',
+      'windsurf',
+      'copilot',
+      'cline',
+      'roo',
     ]);
   });
 });
@@ -167,13 +171,21 @@ describe('GitHub source parser & tarball extractor', () => {
   });
 });
 
-describe('Gate 2: 4x4 Matrix Conversions & Translation Rules', () => {
+function targetMetaConfigDirOrRoot(targetFormat: FormatId): string {
+  return FORMAT_META[targetFormat].configDir;
+}
+
+describe('Gate 2: 9x9 Matrix Conversions & Translation Rules', () => {
   const fixtureByFormat: Record<FormatId, string> = {
     cursor: path.join(FIXTURES_DIR, 'cursor-repo'),
     claude: path.join(FIXTURES_DIR, 'claude-repo'),
     opencode: path.join(FIXTURES_DIR, 'opencode-repo'),
     codex: path.join(FIXTURES_DIR, 'codex-repo'),
     antigravity: path.join(FIXTURES_DIR, 'antigravity-repo'),
+    windsurf: path.join(FIXTURES_DIR, 'windsurf-repo'),
+    copilot: path.join(FIXTURES_DIR, 'copilot-repo'),
+    cline: path.join(FIXTURES_DIR, 'cline-repo'),
+    roo: path.join(FIXTURES_DIR, 'roo-repo'),
   };
 
   for (const sourceFormat of FORMAT_IDS) {
@@ -198,6 +210,17 @@ describe('Gate 2: 4x4 Matrix Conversions & Translation Rules', () => {
 
         expect(summary.created).toBeGreaterThan(0);
         expect(summary.skipped).toBe(0);
+
+        if (sourceFormat === 'copilot') {
+          expect(
+            fs.existsSync(path.join(dest, '.github', 'workflows', 'ci.yml')),
+          ).toBe(false);
+          expect(
+            fs.existsSync(
+              path.join(dest, targetMetaConfigDirOrRoot(targetFormat), 'workflows', 'ci.yml'),
+            ),
+          ).toBe(false);
+        }
 
         const targetMeta = FORMAT_META[targetFormat];
         const rootRulePath = path.join(dest, targetMeta.rootRuleFile);
@@ -348,6 +371,21 @@ describe('Gate 2: 4x4 Matrix Conversions & Translation Rules', () => {
     ).toBe(true);
     expect(
       antigravityEmitted.some((f) => f.relativePath.startsWith('.agents/')),
+    ).toBe(false);
+
+    const copilotEmitted = getAdapter('copilot').emit(pkg, { global: true });
+    expect(
+      copilotEmitted.some(
+        (f) => f.relativePath === 'skills/react-hooks/SKILL.md',
+      ),
+    ).toBe(true);
+    expect(
+      copilotEmitted.some(
+        (f) => f.relativePath === 'copilot-instructions.md',
+      ),
+    ).toBe(true);
+    expect(
+      copilotEmitted.some((f) => f.relativePath.startsWith('.github/')),
     ).toBe(false);
   });
 });

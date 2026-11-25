@@ -1,11 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import {
-  isConfigAssetPath,
-  normalizePosixPath,
-  resolveWithin,
-  type EmittedFile,
-} from './ir.js';
+import { normalizePosixPath, resolveWithin, isConfigAssetPath, type EmittedFile } from './ir.js';
 import {
   getInstallDir,
   hashBuffer,

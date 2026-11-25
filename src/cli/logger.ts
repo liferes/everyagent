@@ -115,4 +115,8 @@ export function logWriteSummary(
       'Two target formats share a file name and produced different content. Install them one at a time with -t <format> if you need both.',
     );
   }
+
+  console.log(
+    pc.dim('Always double-check the output in case some skills were not detected.'),
+  );
 }

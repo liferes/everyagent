@@ -10,6 +10,7 @@ import {
   type EveryagentPackage,
 } from '../core/ir.js';
 import {
+  buildDetection,
   normalizeGlobs,
   parseMarkdownWithFrontmatter,
   serializeMarkdownWithFrontmatter,
@@ -68,31 +69,12 @@ export const cursorAdapter: Adapter = {
       return null;
     }
 
-    const matchedPaths = [...rulePaths, ...otherConfigPaths];
-    if (hasRootRule) {
-      matchedPaths.push(ROOT_RULE_FILE);
-    }
-
-    const parts: string[] = [];
-    if (rulePaths.length > 0) {
-      parts.push(`${rulePaths.length} skill${rulePaths.length === 1 ? '' : 's'} found`);
-    }
-    if (hasRootRule) {
-      parts.push(ROOT_RULE_FILE);
-    }
-    if (parts.length === 0) {
-      parts.push(`${otherConfigPaths.length} config asset${otherConfigPaths.length === 1 ? '' : 's'}`);
-    }
-
-    return {
-      format: 'cursor',
-      label: this.label,
-      skillCount: rulePaths.length,
+    return buildDetection('cursor', {
+      skills: rulePaths,
+      configPaths: otherConfigPaths,
       hasRootRule,
-      summary: `${this.label} — ${parts.join(', ')}`,
-      matchedPaths,
       allowLoose,
-    };
+    });
   },
 
   parse(files: SourceFile[], options?: ParseOptions): EveryagentPackage {

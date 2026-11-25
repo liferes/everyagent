@@ -136,11 +136,22 @@ export function parseGitHubSource(rawInput: string): ParsedSource {
         // Step up to the skill folder so scripts, references, and assets travel with it.
         subpath = parentDir;
       } else if (
+        lowerFile === 'copilot-instructions.md' &&
+        parentDir?.toLowerCase() === '.github'
+      ) {
+        // Keep the .github/ prefix so Copilot still detects it as root rules.
+        subpath = undefined;
+        fileFilter = '.github/copilot-instructions.md';
+      } else if (
         lowerFile.endsWith('.mdc') ||
         lowerFile === 'claude.md' ||
         lowerFile === 'agents.md' ||
         lowerFile === 'gemini.md' ||
-        lowerFile === '.cursorrules'
+        lowerFile === '.cursorrules' ||
+        lowerFile === '.windsurfrules' ||
+        lowerFile === '.clinerules' ||
+        lowerFile === '.roorules' ||
+        lowerFile === 'copilot-instructions.md'
       ) {
         subpath = parentDir;
         fileFilter = fileName;

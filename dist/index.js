@@ -3662,15 +3662,25 @@ var require_src = __commonJS({
 // src/index.ts
 var import_picocolors6 = __toESM(require_picocolors(), 1);
 import fs7 from "fs";
-import path13 from "path";
+import path18 from "path";
 
 // src/adapters/antigravity.ts
 import os from "os";
-import path2 from "path";
+import path3 from "path";
 
 // src/core/ir.ts
 import path from "path";
-var FORMAT_IDS = ["cursor", "claude", "opencode", "codex", "antigravity"];
+var FORMAT_IDS = [
+  "cursor",
+  "claude",
+  "opencode",
+  "codex",
+  "antigravity",
+  "windsurf",
+  "copilot",
+  "cline",
+  "roo"
+];
 var FORMAT_META = {
   cursor: {
     id: "cursor",
@@ -3701,6 +3711,30 @@ var FORMAT_META = {
     label: "Antigravity (.agents/)",
     configDir: ".agents",
     rootRuleFile: "GEMINI.md"
+  },
+  windsurf: {
+    id: "windsurf",
+    label: "Windsurf (.windsurf/)",
+    configDir: ".windsurf",
+    rootRuleFile: ".windsurfrules"
+  },
+  copilot: {
+    id: "copilot",
+    label: "Copilot (.github/skills/)",
+    configDir: ".github",
+    rootRuleFile: ".github/copilot-instructions.md"
+  },
+  cline: {
+    id: "cline",
+    label: "Cline (.cline/)",
+    configDir: ".cline",
+    rootRuleFile: ".clinerules"
+  },
+  roo: {
+    id: "roo",
+    label: "Roo Code (.roo/)",
+    configDir: ".roo",
+    rootRuleFile: ".roorules"
   }
 };
 var TEXT_EXTENSIONS = /* @__PURE__ */ new Set([
@@ -3796,6 +3830,7 @@ function isTextFile(filePath, content) {
 
 // src/adapters/types.ts
 var import_gray_matter = __toESM(require_gray_matter(), 1);
+import path2 from "path";
 
 // src/core/rewriter.ts
 function escapeRegex(value) {
@@ -3863,11 +3898,13 @@ function rewritePaths(text, sourceFormat, targetFormat) {
     );
     result = result.replace(sourceSkillsRe, `${targetMeta.configDir}/skills/`);
   }
-  const configDirRe = new RegExp(
-    `(^|[^A-Za-z0-9_.-])${escapeRegex(sourceMeta.configDir)}\\/`,
-    "g"
-  );
-  result = result.replace(configDirRe, `$1${targetMeta.configDir}/`);
+  if (sourceFormat !== "copilot") {
+    const configDirRe = new RegExp(
+      `(^|[^A-Za-z0-9_.-])${escapeRegex(sourceMeta.configDir)}\\/`,
+      "g"
+    );
+    result = result.replace(configDirRe, `$1${targetMeta.configDir}/`);
+  }
   if (sourceMeta.rootRuleFile !== targetMeta.rootRuleFile) {
     const rootRuleRe = new RegExp(
       `(^|[^A-Za-z0-9_.-])${escapeRegex(sourceMeta.rootRuleFile)}(?=$|[^A-Za-z0-9_.-])`,
@@ -3967,6 +4004,35 @@ function sanitizeSkillName(raw) {
   const segments = normalizePosixPath(raw).split("/").map((segment) => segment.replace(/[^a-zA-Z0-9._-]/g, "-")).filter((segment) => segment && segment !== "." && segment !== "..");
   return segments.join("/") || "skill";
 }
+function plural(count, word) {
+  return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+function buildDetection(format, evidence) {
+  const meta = FORMAT_META[format];
+  const matchedPaths = [...evidence.skills, ...evidence.configPaths];
+  if (evidence.hasRootRule) {
+    matchedPaths.push(meta.rootRuleFile);
+  }
+  const summary = [];
+  if (evidence.skills.length > 0) {
+    summary.push(`${plural(evidence.skills.length, "skill")} found`);
+  }
+  if (evidence.hasRootRule) {
+    summary.push(meta.rootRuleFile);
+  }
+  if (summary.length === 0) {
+    summary.push(plural(evidence.configPaths.length, "config asset"));
+  }
+  return {
+    format,
+    label: meta.label,
+    skillCount: evidence.skills.length,
+    hasRootRule: evidence.hasRootRule,
+    summary: `${meta.label} \u2014 ${summary.join(", ")}`,
+    matchedPaths,
+    allowLoose: evidence.allowLoose
+  };
+}
 function detectSkillMdFormat(format, files, options2) {
   const meta = FORMAT_META[format];
   const prefix = `${meta.configDir}/skills/`;
@@ -3978,10 +4044,10 @@ function detectSkillMdFormat(format, files, options2) {
     const p2 = normalizePosixPath(file.path);
     if (p2.startsWith(prefix) && p2.endsWith("/SKILL.md")) {
       skillPaths.push(p2);
-    } else if (p2.startsWith(configPrefix)) {
-      otherConfigPaths.push(p2);
     } else if (p2 === meta.rootRuleFile) {
       hasRootRule = true;
+    } else if (p2.startsWith(configPrefix)) {
+      otherConfigPaths.push(p2);
     }
   }
   let allowLoose = false;
@@ -3997,29 +4063,12 @@ function detectSkillMdFormat(format, files, options2) {
   if (skillPaths.length === 0 && otherConfigPaths.length === 0 && !hasRootRule) {
     return null;
   }
-  const matchedPaths = [...skillPaths, ...otherConfigPaths];
-  if (hasRootRule) {
-    matchedPaths.push(meta.rootRuleFile);
-  }
-  const parts = [];
-  if (skillPaths.length > 0) {
-    parts.push(`${skillPaths.length} skill${skillPaths.length === 1 ? "" : "s"} found`);
-  }
-  if (hasRootRule) {
-    parts.push(meta.rootRuleFile);
-  }
-  if (parts.length === 0) {
-    parts.push(`${otherConfigPaths.length} config asset${otherConfigPaths.length === 1 ? "" : "s"}`);
-  }
-  return {
-    format,
-    label: meta.label,
-    skillCount: skillPaths.length,
+  return buildDetection(format, {
+    skills: skillPaths,
+    configPaths: otherConfigPaths,
     hasRootRule,
-    summary: `${meta.label} \u2014 ${parts.join(", ")}`,
-    matchedPaths,
     allowLoose
-  };
+  });
 }
 function parseSkillMdFormat(format, files, options2) {
   const meta = FORMAT_META[format];
@@ -4199,7 +4248,7 @@ function emitSkillMdFormat(format, pkg, options2, includeAllowedTools = false) {
     const content = normalized.endsWith("\n") ? normalized : `${normalized}
 `;
     emitted.push({
-      relativePath: meta.rootRuleFile,
+      relativePath: isGlobal ? path2.posix.basename(meta.rootRuleFile) : meta.rootRuleFile,
       content: Buffer.from(content, "utf8"),
       targetFormat: format
     });
@@ -4228,7 +4277,7 @@ var antigravityAdapter = {
   configDir: ".agents",
   rootRuleFile: "GEMINI.md",
   getGlobalDir() {
-    return path2.join(os.homedir(), ".gemini", "config");
+    return path3.join(os.homedir(), ".gemini", "config");
   },
   detect(files, options2) {
     return detectSkillMdFormat(
@@ -4251,14 +4300,14 @@ var antigravityAdapter = {
 
 // src/adapters/claude.ts
 import os2 from "os";
-import path3 from "path";
+import path4 from "path";
 var claudeAdapter = {
   id: "claude",
   label: "Claude Code (.claude/)",
   configDir: ".claude",
   rootRuleFile: "CLAUDE.md",
   getGlobalDir() {
-    return path3.join(os2.homedir(), ".claude");
+    return path4.join(os2.homedir(), ".claude");
   },
   detect(files, options2) {
     return detectSkillMdFormat("claude", files, options2);
@@ -4271,16 +4320,38 @@ var claudeAdapter = {
   }
 };
 
-// src/adapters/codex.ts
+// src/adapters/cline.ts
 import os3 from "os";
-import path4 from "path";
+import path5 from "path";
+var clineAdapter = {
+  id: "cline",
+  label: "Cline (.cline/)",
+  configDir: ".cline",
+  rootRuleFile: ".clinerules",
+  getGlobalDir() {
+    return path5.join(os3.homedir(), ".cline");
+  },
+  detect(files, options2) {
+    return detectSkillMdFormat("cline", files, options2);
+  },
+  parse(files, options2) {
+    return parseSkillMdFormat("cline", files, options2);
+  },
+  emit(pkg, options2) {
+    return emitSkillMdFormat("cline", pkg, options2, false);
+  }
+};
+
+// src/adapters/codex.ts
+import os4 from "os";
+import path6 from "path";
 var codexAdapter = {
   id: "codex",
   label: "Codex CLI (.codex/)",
   configDir: ".codex",
   rootRuleFile: "AGENTS.md",
   getGlobalDir() {
-    return path4.join(os3.homedir(), ".codex");
+    return path6.join(os4.homedir(), ".codex");
   },
   detect(files, options2) {
     return detectSkillMdFormat("codex", files, options2);
@@ -4293,9 +4364,48 @@ var codexAdapter = {
   }
 };
 
+// src/adapters/copilot.ts
+import os5 from "os";
+import path7 from "path";
+function filterCopilotFiles(files, allowLoose) {
+  return files.filter((file) => {
+    const p2 = normalizePosixPath(file.path);
+    if (p2.startsWith(".github/skills/") || p2 === ".github/copilot-instructions.md") {
+      return true;
+    }
+    return Boolean(allowLoose) && !p2.startsWith(".github/");
+  });
+}
+var copilotAdapter = {
+  id: "copilot",
+  label: "Copilot (.github/skills/)",
+  configDir: ".github",
+  rootRuleFile: ".github/copilot-instructions.md",
+  getGlobalDir() {
+    return path7.join(os5.homedir(), ".copilot");
+  },
+  detect(files, options2) {
+    return detectSkillMdFormat(
+      "copilot",
+      filterCopilotFiles(files, options2?.allowLoose),
+      options2
+    );
+  },
+  parse(files, options2) {
+    return parseSkillMdFormat(
+      "copilot",
+      filterCopilotFiles(files, options2?.allowLoose),
+      options2
+    );
+  },
+  emit(pkg, options2) {
+    return emitSkillMdFormat("copilot", pkg, options2, false);
+  }
+};
+
 // src/adapters/cursor.ts
-import os4 from "os";
-import path5 from "path";
+import os6 from "os";
+import path8 from "path";
 var RULES_PREFIX = ".cursor/rules/";
 var CONFIG_PREFIX = ".cursor/";
 var ROOT_RULE_FILE = ".cursorrules";
@@ -4305,7 +4415,7 @@ var cursorAdapter = {
   configDir: ".cursor",
   rootRuleFile: ROOT_RULE_FILE,
   getGlobalDir() {
-    return path5.join(os4.homedir(), ".cursor");
+    return path8.join(os6.homedir(), ".cursor");
   },
   detect(files, options2) {
     const rulePaths = [];
@@ -4334,29 +4444,12 @@ var cursorAdapter = {
     if (rulePaths.length === 0 && otherConfigPaths.length === 0 && !hasRootRule) {
       return null;
     }
-    const matchedPaths = [...rulePaths, ...otherConfigPaths];
-    if (hasRootRule) {
-      matchedPaths.push(ROOT_RULE_FILE);
-    }
-    const parts = [];
-    if (rulePaths.length > 0) {
-      parts.push(`${rulePaths.length} skill${rulePaths.length === 1 ? "" : "s"} found`);
-    }
-    if (hasRootRule) {
-      parts.push(ROOT_RULE_FILE);
-    }
-    if (parts.length === 0) {
-      parts.push(`${otherConfigPaths.length} config asset${otherConfigPaths.length === 1 ? "" : "s"}`);
-    }
-    return {
-      format: "cursor",
-      label: this.label,
-      skillCount: rulePaths.length,
+    return buildDetection("cursor", {
+      skills: rulePaths,
+      configPaths: otherConfigPaths,
       hasRootRule,
-      summary: `${this.label} \u2014 ${parts.join(", ")}`,
-      matchedPaths,
       allowLoose
-    };
+    });
   },
   parse(files, options2) {
     const skillsByName = /* @__PURE__ */ new Map();
@@ -4498,15 +4591,15 @@ var cursorAdapter = {
 };
 
 // src/adapters/opencode.ts
-import os5 from "os";
-import path6 from "path";
+import os7 from "os";
+import path9 from "path";
 var opencodeAdapter = {
   id: "opencode",
   label: "OpenCode (.opencode/)",
   configDir: ".opencode",
   rootRuleFile: "AGENTS.md",
   getGlobalDir() {
-    return path6.join(os5.homedir(), ".config", "opencode");
+    return path9.join(os7.homedir(), ".config", "opencode");
   },
   detect(files, options2) {
     return detectSkillMdFormat("opencode", files, options2);
@@ -4519,20 +4612,72 @@ var opencodeAdapter = {
   }
 };
 
+// src/adapters/roo.ts
+import os8 from "os";
+import path10 from "path";
+var rooAdapter = {
+  id: "roo",
+  label: "Roo Code (.roo/)",
+  configDir: ".roo",
+  rootRuleFile: ".roorules",
+  getGlobalDir() {
+    return path10.join(os8.homedir(), ".roo");
+  },
+  detect(files, options2) {
+    return detectSkillMdFormat("roo", files, options2);
+  },
+  parse(files, options2) {
+    return parseSkillMdFormat("roo", files, options2);
+  },
+  emit(pkg, options2) {
+    return emitSkillMdFormat("roo", pkg, options2, false);
+  }
+};
+
+// src/adapters/windsurf.ts
+import os9 from "os";
+import path11 from "path";
+var windsurfAdapter = {
+  id: "windsurf",
+  label: "Windsurf (.windsurf/)",
+  configDir: ".windsurf",
+  rootRuleFile: ".windsurfrules",
+  getGlobalDir() {
+    return path11.join(os9.homedir(), ".codeium", "windsurf");
+  },
+  detect(files, options2) {
+    return detectSkillMdFormat("windsurf", files, options2);
+  },
+  parse(files, options2) {
+    return parseSkillMdFormat("windsurf", files, options2);
+  },
+  emit(pkg, options2) {
+    return emitSkillMdFormat("windsurf", pkg, options2, false);
+  }
+};
+
 // src/adapters/registry.ts
 var ADAPTERS = [
   cursorAdapter,
   claudeAdapter,
   opencodeAdapter,
   codexAdapter,
-  antigravityAdapter
+  antigravityAdapter,
+  windsurfAdapter,
+  copilotAdapter,
+  clineAdapter,
+  rooAdapter
 ];
 var ADAPTER_MAP = {
   cursor: cursorAdapter,
   claude: claudeAdapter,
   opencode: opencodeAdapter,
   codex: codexAdapter,
-  antigravity: antigravityAdapter
+  antigravity: antigravityAdapter,
+  windsurf: windsurfAdapter,
+  copilot: copilotAdapter,
+  cline: clineAdapter,
+  roo: rooAdapter
 };
 function getAdapter(id) {
   return ADAPTER_MAP[id];
@@ -4571,7 +4716,7 @@ function detectFormats(files, options2) {
 
 // src/core/detector.ts
 import fs from "fs";
-import path7 from "path";
+import path12 from "path";
 var IGNORED_DIRS = /* @__PURE__ */ new Set([".git", "node_modules", "dist"]);
 var KNOWN_CONFIG_DIRS = [
   ".cursor",
@@ -4579,28 +4724,71 @@ var KNOWN_CONFIG_DIRS = [
   ".opencode",
   ".codex",
   ".agents",
-  ".agent"
+  ".agent",
+  ".windsurf",
+  ".cline",
+  ".roo"
 ];
 var KNOWN_ROOT_FILES = /* @__PURE__ */ new Set([
   ".cursorrules",
   "CLAUDE.md",
   "AGENTS.md",
   "GEMINI.md",
+  ".windsurfrules",
+  ".clinerules",
+  ".roorules",
   "SKILL.md"
 ]);
-function existsSafe(targetPath) {
+function pathHasKind(targetPath, kind = "any") {
+  let stats;
   try {
-    return fs.existsSync(targetPath);
+    stats = fs.statSync(targetPath);
   } catch {
     return false;
   }
+  if (kind === "dir") return stats.isDirectory();
+  if (kind === "file") return stats.isFile();
+  return true;
 }
-function isDirSafe(targetPath) {
-  try {
-    return fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory();
-  } catch {
-    return false;
-  }
+var PROJECT_MARKERS = {
+  cursor: [
+    { segments: [".cursor"], kind: "any" },
+    { segments: [".cursorrules"], kind: "any" }
+  ],
+  claude: [
+    { segments: [".claude"], kind: "any" },
+    { segments: ["CLAUDE.md"], kind: "any" }
+  ],
+  opencode: [{ segments: [".opencode"], kind: "any" }],
+  codex: [{ segments: [".codex"], kind: "any" }],
+  // `.agents/` only. GEMINI.md is shared with Gemini CLI, so on its own it
+  // cannot say which tool the project belongs to.
+  antigravity: [
+    { segments: [".agents"], kind: "any" },
+    { segments: [".agent"], kind: "any" }
+  ],
+  windsurf: [
+    { segments: [".windsurf"], kind: "any" },
+    { segments: [".windsurfrules"], kind: "any" }
+  ],
+  // Copilot shares `.github/` with workflows, so only these two paths count.
+  copilot: [
+    { segments: [".github", "skills"], kind: "dir" },
+    { segments: [".github", "copilot-instructions.md"], kind: "file" }
+  ],
+  cline: [
+    { segments: [".cline"], kind: "any" },
+    { segments: [".clinerules"], kind: "any" }
+  ],
+  roo: [
+    { segments: [".roo"], kind: "any" },
+    { segments: [".roorules"], kind: "any" }
+  ]
+};
+function hasProjectMarker(rootDir, format) {
+  return PROJECT_MARKERS[format].some(
+    (marker) => pathHasKind(path12.join(rootDir, ...marker.segments), marker.kind)
+  );
 }
 function maybeExcludeSource(formats, options2) {
   if (options2.excludeSourceWhenLocal && options2.sourceFormat) {
@@ -4610,32 +4798,11 @@ function maybeExcludeSource(formats, options2) {
 }
 function detectTargetFormats(options2) {
   if (!options2.global) {
-    const resolvedDir = path7.resolve(options2.targetDir);
-    if (isDirSafe(resolvedDir)) {
-      const projectFormats = [];
-      for (const id of FORMAT_IDS) {
-        if (id === "cursor") {
-          if (existsSafe(path7.join(resolvedDir, ".cursor")) || existsSafe(path7.join(resolvedDir, ".cursorrules"))) {
-            projectFormats.push(id);
-          }
-        } else if (id === "claude") {
-          if (existsSafe(path7.join(resolvedDir, ".claude")) || existsSafe(path7.join(resolvedDir, "CLAUDE.md"))) {
-            projectFormats.push(id);
-          }
-        } else if (id === "opencode") {
-          if (existsSafe(path7.join(resolvedDir, ".opencode"))) {
-            projectFormats.push(id);
-          }
-        } else if (id === "codex") {
-          if (existsSafe(path7.join(resolvedDir, ".codex"))) {
-            projectFormats.push(id);
-          }
-        } else if (id === "antigravity") {
-          if (existsSafe(path7.join(resolvedDir, ".agents")) || existsSafe(path7.join(resolvedDir, ".agent"))) {
-            projectFormats.push(id);
-          }
-        }
-      }
+    const resolvedDir = path12.resolve(options2.targetDir);
+    if (pathHasKind(resolvedDir, "dir")) {
+      const projectFormats = FORMAT_IDS.filter(
+        (id) => hasProjectMarker(resolvedDir, id)
+      );
       const filtered = maybeExcludeSource(projectFormats, options2);
       if (filtered.length > 0) {
         return { formats: filtered, scope: "project" };
@@ -4643,12 +4810,9 @@ function detectTargetFormats(options2) {
     }
   }
   const resolveGlobal = options2.globalDirResolver ?? ((id) => getAdapter(id).getGlobalDir());
-  const globalFormats = [];
-  for (const id of FORMAT_IDS) {
-    if (existsSafe(resolveGlobal(id))) {
-      globalFormats.push(id);
-    }
-  }
+  const globalFormats = FORMAT_IDS.filter(
+    (id) => pathHasKind(resolveGlobal(id))
+  );
   const filteredGlobal = maybeExcludeSource(globalFormats, options2);
   if (filteredGlobal.length > 0) {
     return { formats: filteredGlobal, scope: "global" };
@@ -4656,8 +4820,8 @@ function detectTargetFormats(options2) {
   return { formats: [], scope: "none" };
 }
 function collectDirFiles(rootDir, subDir, out) {
-  const startDir = path7.join(rootDir, subDir);
-  if (!isDirSafe(startDir)) {
+  const startDir = path12.join(rootDir, subDir);
+  if (!pathHasKind(startDir, "dir")) {
     return;
   }
   function walk(currentDir) {
@@ -4667,10 +4831,10 @@ function collectDirFiles(rootDir, subDir, out) {
         if (IGNORED_DIRS.has(entry.name)) {
           continue;
         }
-        walk(path7.join(currentDir, entry.name));
+        walk(path12.join(currentDir, entry.name));
       } else if (entry.isFile()) {
-        const abs = path7.join(currentDir, entry.name);
-        const rel = normalizePosixPath(path7.relative(rootDir, abs));
+        const abs = path12.join(currentDir, entry.name);
+        const rel = normalizePosixPath(path12.relative(rootDir, abs));
         if (rel) {
           out.push({ path: rel, content: fs.readFileSync(abs) });
         }
@@ -4680,13 +4844,25 @@ function collectDirFiles(rootDir, subDir, out) {
   walk(startDir);
 }
 function detectLocalProjectSource(dir) {
-  const resolvedDir = path7.resolve(dir);
-  if (!isDirSafe(resolvedDir)) {
+  const resolvedDir = path12.resolve(dir);
+  if (!pathHasKind(resolvedDir, "dir")) {
     return null;
   }
   const files = [];
   for (const configDir of KNOWN_CONFIG_DIRS) {
     collectDirFiles(resolvedDir, configDir, files);
+  }
+  collectDirFiles(resolvedDir, path12.join(".github", "skills"), files);
+  const copilotInstructionsPath = path12.join(
+    resolvedDir,
+    ".github",
+    "copilot-instructions.md"
+  );
+  if (pathHasKind(copilotInstructionsPath, "file")) {
+    files.push({
+      path: ".github/copilot-instructions.md",
+      content: fs.readFileSync(copilotInstructionsPath)
+    });
   }
   let topEntries = [];
   try {
@@ -4697,7 +4873,7 @@ function detectLocalProjectSource(dir) {
   for (const entry of topEntries) {
     if (!entry.isFile()) continue;
     if (KNOWN_ROOT_FILES.has(entry.name) || entry.name.endsWith(".mdc")) {
-      const abs = path7.join(resolvedDir, entry.name);
+      const abs = path12.join(resolvedDir, entry.name);
       files.push({
         path: entry.name,
         content: fs.readFileSync(abs)
@@ -4716,7 +4892,7 @@ function detectLocalProjectSource(dir) {
       source: {
         type: "local",
         localPath: resolvedDir,
-        displayLabel: path7.basename(resolvedDir) || resolvedDir
+        displayLabel: path12.basename(resolvedDir) || resolvedDir
       },
       files
     },
@@ -4725,13 +4901,17 @@ function detectLocalProjectSource(dir) {
 }
 
 // src/core/lint.ts
-import path8 from "path";
+import path13 from "path";
 var MAX_DESCRIPTION_LEN = {
   cursor: 500,
   claude: 1024,
   opencode: 1024,
   codex: 1024,
-  antigravity: 1024
+  antigravity: 1024,
+  windsurf: 1024,
+  copilot: 1024,
+  cline: 1024,
+  roo: 1024
 };
 var VALID_SKILL_NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
 function extractMarkdownLinks(body) {
@@ -4759,7 +4939,7 @@ function lintSourceFiles(files, format, options2) {
   const entryFiles = [];
   for (const file of files) {
     const p2 = normalizePosixPath(file.path);
-    const isEntry = format === "cursor" ? p2.endsWith(".mdc") && (p2.startsWith(".cursor/rules/") || Boolean(options2?.allowLoose)) : p2 === "SKILL.md" || p2.endsWith("/SKILL.md");
+    const isEntry = format === "cursor" ? p2.endsWith(".mdc") && (p2.startsWith(".cursor/rules/") || Boolean(options2?.allowLoose)) : format === "copilot" && !options2?.allowLoose ? p2.startsWith(".github/skills/") && p2.endsWith("/SKILL.md") : p2 === "SKILL.md" || p2.endsWith("/SKILL.md");
     if (isEntry) {
       entryFiles.push(file);
     }
@@ -4775,7 +4955,7 @@ function lintSourceFiles(files, format, options2) {
       const parsed = parseMarkdownWithFrontmatter(file.content.toString("utf8"));
       const rawName = parsed.data.name;
       const p2 = normalizePosixPath(file.path);
-      const fallbackName = format === "cursor" ? path8.posix.basename(p2, ".mdc") : path8.posix.basename(path8.posix.dirname(p2)) || "skill";
+      const fallbackName = format === "cursor" ? path13.posix.basename(p2, ".mdc") : path13.posix.basename(path13.posix.dirname(p2)) || "skill";
       const resolvedName = typeof rawName === "string" && rawName.trim() ? rawName.trim() : fallbackName;
       if (format !== "cursor" && (!rawName || typeof rawName !== "string" || !rawName.trim())) {
         findings.push({
@@ -4820,9 +5000,9 @@ function lintSourceFiles(files, format, options2) {
           message: `Description is ${desc.trim().length} characters (recommended max for ${meta.label} is ${MAX_DESCRIPTION_LEN[format]}).`
         });
       }
-      const dir = path8.posix.dirname(p2);
+      const dir = path13.posix.dirname(p2);
       for (const relLink of extractMarkdownLinks(parsed.body)) {
-        const resolved = relLink.startsWith("/") ? normalizePosixPath(relLink) : normalizePosixPath(path8.posix.join(dir === "." ? "" : dir, relLink));
+        const resolved = relLink.startsWith("/") ? normalizePosixPath(relLink) : normalizePosixPath(path13.posix.join(dir === "." ? "" : dir, relLink));
         if (!resolved) continue;
         const asPrefix = `${resolved}/`;
         const exists = filePathSet.has(resolved) || filePathSet.has(normalizePosixPath(relLink)) || Array.from(filePathSet).some((fp) => fp.startsWith(asPrefix));
@@ -4861,12 +5041,12 @@ function lintSourceFiles(files, format, options2) {
 // src/core/manifest.ts
 import crypto from "crypto";
 import fs3 from "fs";
-import os6 from "os";
-import path10 from "path";
+import os10 from "os";
+import path15 from "path";
 
 // src/core/fetcher.ts
 import fs2 from "fs";
-import path9 from "path";
+import path14 from "path";
 import zlib from "zlib";
 var VALID_SEGMENT_RE = /^[A-Za-z0-9_.-]+$/;
 var IGNORED_LOCAL_DIRS = /* @__PURE__ */ new Set([".git", "node_modules", "dist"]);
@@ -4878,11 +5058,11 @@ function parseGitHubSource(rawInput) {
   if (fs2.existsSync(input)) {
     const stat = fs2.statSync(input);
     if (stat.isDirectory()) {
-      const resolved = path9.resolve(input);
+      const resolved = path14.resolve(input);
       return {
         type: "local",
         localPath: resolved,
-        displayLabel: path9.basename(resolved) || resolved
+        displayLabel: path14.basename(resolved) || resolved
       };
     }
   }
@@ -4949,7 +5129,10 @@ function parseGitHubSource(rawInput) {
       const lowerFile = fileName.toLowerCase();
       if (lowerFile === "skill.md") {
         subpath = parentDir;
-      } else if (lowerFile.endsWith(".mdc") || lowerFile === "claude.md" || lowerFile === "agents.md" || lowerFile === "gemini.md" || lowerFile === ".cursorrules") {
+      } else if (lowerFile === "copilot-instructions.md" && parentDir?.toLowerCase() === ".github") {
+        subpath = void 0;
+        fileFilter = ".github/copilot-instructions.md";
+      } else if (lowerFile.endsWith(".mdc") || lowerFile === "claude.md" || lowerFile === "agents.md" || lowerFile === "gemini.md" || lowerFile === ".cursorrules" || lowerFile === ".windsurfrules" || lowerFile === ".clinerules" || lowerFile === ".roorules" || lowerFile === "copilot-instructions.md") {
         subpath = parentDir;
         fileFilter = fileName;
       } else {
@@ -5103,10 +5286,10 @@ function readLocalDirectory(rootDir) {
         if (IGNORED_LOCAL_DIRS.has(entry.name)) {
           continue;
         }
-        walk(path9.join(currentDir, entry.name));
+        walk(path14.join(currentDir, entry.name));
       } else if (entry.isFile()) {
-        const abs = path9.join(currentDir, entry.name);
-        const rel = normalizePosixPath(path9.relative(rootDir, abs));
+        const abs = path14.join(currentDir, entry.name);
+        const rel = normalizePosixPath(path14.relative(rootDir, abs));
         if (rel) {
           files.push({
             path: rel,
@@ -5181,7 +5364,7 @@ async function fetchSource(input) {
     }
     throw new Error(`Repository "${source.owner}/${source.repo}" appears to be empty.`);
   }
-  const subpathName = source.subpath ? path9.posix.basename(normalizePosixPath(source.subpath)) : void 0;
+  const subpathName = source.subpath ? path14.posix.basename(normalizePosixPath(source.subpath)) : void 0;
   return {
     source,
     files,
@@ -5206,11 +5389,11 @@ function hashFile(filePath) {
 }
 function getManifestPath(options2) {
   if (options2.global) {
-    const home = options2.homeDir ?? os6.homedir();
-    return path10.join(path10.resolve(home), ".everyagent", "manifest.json");
+    const home = options2.homeDir ?? os10.homedir();
+    return path15.join(path15.resolve(home), ".everyagent", "manifest.json");
   }
-  return path10.join(
-    path10.resolve(options2.targetDir ?? "."),
+  return path15.join(
+    path15.resolve(options2.targetDir ?? "."),
     ".everyagent",
     "manifest.json"
   );
@@ -5273,7 +5456,7 @@ function normalizeInstallEntry(entry) {
     sourceFormat: entry.sourceFormat,
     targetFormat: entry.targetFormat,
     global: Boolean(entry.global),
-    targetDir: entry.global ? path10.resolve(
+    targetDir: entry.global ? path15.resolve(
       entry.targetDir ?? getAdapter(entry.targetFormat).getGlobalDir()
     ) : null,
     ...entry.skills ? { skills: [...entry.skills] } : {},
@@ -5292,7 +5475,7 @@ function writeManifest(manifestPath, manifest) {
     version: 1,
     installs
   };
-  fs3.mkdirSync(path10.dirname(manifestPath), { recursive: true });
+  fs3.mkdirSync(path15.dirname(manifestPath), { recursive: true });
   fs3.writeFileSync(
     manifestPath,
     `${JSON.stringify(sortJsonKeys(normalized), null, 2)}
@@ -5309,8 +5492,8 @@ function formatSourceForManifest(parsedSource, targetDir, global) {
     };
   }
   if (!global) {
-    const rel = path10.relative(path10.resolve(targetDir), parsedSource.localPath);
-    if (!path10.isAbsolute(rel)) {
+    const rel = path15.relative(path15.resolve(targetDir), parsedSource.localPath);
+    if (!path15.isAbsolute(rel)) {
       return {
         source: rel === "" ? "." : normalizePosixPath(rel),
         ref: null,
@@ -5326,11 +5509,11 @@ function formatSourceForManifest(parsedSource, targetDir, global) {
 }
 function getInstallDir(entry, projectDir) {
   if (entry.global) {
-    return path10.resolve(
+    return path15.resolve(
       entry.targetDir ?? getAdapter(entry.targetFormat).getGlobalDir()
     );
   }
-  return path10.resolve(projectDir);
+  return path15.resolve(projectDir);
 }
 function resolveManifestSourceForFetch(entry, projectDir) {
   if (entry.ref !== null || entry.subpath !== null) {
@@ -5340,13 +5523,13 @@ function resolveManifestSourceForFetch(entry, projectDir) {
     }
     return `${entry.source}/tree/${ref}`;
   }
-  if (path10.isAbsolute(entry.source)) {
+  if (path15.isAbsolute(entry.source)) {
     return entry.source;
   }
   if (entry.source === "." || entry.source.startsWith("./") || entry.source.startsWith("../")) {
-    return path10.resolve(projectDir, entry.source);
+    return path15.resolve(projectDir, entry.source);
   }
-  const candidateLocal = path10.resolve(projectDir, entry.source);
+  const candidateLocal = path15.resolve(projectDir, entry.source);
   if (fs3.existsSync(candidateLocal)) {
     return candidateLocal;
   }
@@ -5373,7 +5556,7 @@ function matchesInstallSource(entry, query, projectDir) {
   if (combined && combined === lower) {
     return true;
   }
-  if (path10.basename(entry.source).toLowerCase() === lower) {
+  if (path15.basename(entry.source).toLowerCase() === lower) {
     return true;
   }
   try {
@@ -5386,7 +5569,7 @@ function matchesInstallSource(entry, query, projectDir) {
         }
       }
     } else {
-      const resolvedEntry2 = path10.resolve(
+      const resolvedEntry2 = path15.resolve(
         projectDir,
         resolveManifestSourceForFetch(entry, projectDir)
       );
@@ -5396,8 +5579,8 @@ function matchesInstallSource(entry, query, projectDir) {
     }
   } catch {
   }
-  const resolvedQuery = path10.resolve(projectDir, trimmed).toLowerCase();
-  const resolvedEntry = path10.resolve(projectDir, resolveManifestSourceForFetch(entry, projectDir)).toLowerCase();
+  const resolvedQuery = path15.resolve(projectDir, trimmed).toLowerCase();
+  const resolvedEntry = path15.resolve(projectDir, resolveManifestSourceForFetch(entry, projectDir)).toLowerCase();
   return resolvedQuery === resolvedEntry;
 }
 function inspectInstallDrift(entry, projectDir) {
@@ -5487,7 +5670,7 @@ function recordManifestEntries(options2) {
       sourceFormat: options2.sourceFormat,
       targetFormat: planned.targetFormat,
       global: options2.global,
-      targetDir: options2.global ? path10.resolve(planned.destination) : null,
+      targetDir: options2.global ? path15.resolve(planned.destination) : null,
       ...options2.selection?.skillNames ? { skills: options2.selection.skillNames } : {},
       ...options2.selection?.includeRootRules !== void 0 ? { includeRootRules: options2.selection.includeRootRules } : {},
       ...options2.selection?.includeSharedAssets !== void 0 ? { includeSharedAssets: options2.selection.includeSharedAssets } : {},
@@ -5517,7 +5700,20 @@ var FORMAT_ALIASES = {
   agy: "antigravity",
   agents: "antigravity",
   agent: "antigravity",
-  googleantigravity: "antigravity"
+  googleantigravity: "antigravity",
+  windsurf: "windsurf",
+  ws: "windsurf",
+  windsurfrules: "windsurf",
+  codeium: "windsurf",
+  copilot: "copilot",
+  ghcopilot: "copilot",
+  githubcopilot: "copilot",
+  github: "copilot",
+  cline: "cline",
+  clinerules: "cline",
+  roo: "roo",
+  roocode: "roo",
+  roorules: "roo"
 };
 function normalizeToken(raw) {
   return raw.trim().toLowerCase().replace(/^\.+/, "").replace(/[-_\s]+/g, "");
@@ -5569,28 +5765,40 @@ function suggestFormat(raw) {
   }
   return bestDistance <= 2 ? bestFormat : null;
 }
+var SCORE_EXACT = -1;
+var SCORE_CONTAINS = 0.5;
+var SCORE_CONTAINS_LENGTH_PENALTY = 0.01;
+var SCORE_BY_DISTANCE = 1;
+var MIN_EDIT_DISTANCE = 2;
+var LENGTH_TOLERANCE = 0.4;
 function findClosestMatches(query, candidates, maxSuggestions = 3) {
   const normQuery = normalizeToken(query);
   if (!normQuery || candidates.length === 0) {
     return [];
   }
-  const maxDist = Math.max(2, Math.floor(normQuery.length * 0.4));
+  const maxDist = Math.max(
+    MIN_EDIT_DISTANCE,
+    Math.floor(normQuery.length * LENGTH_TOLERANCE)
+  );
   const scored = [];
   for (const candidate of candidates) {
     const normCand = normalizeToken(candidate);
     if (!normCand) continue;
     if (normCand === normQuery) {
-      scored.push({ candidate, score: -1 });
+      scored.push({ candidate, score: SCORE_EXACT });
       continue;
     }
     if (normCand.includes(normQuery) || normQuery.includes(normCand)) {
       const lengthDiff = Math.abs(normCand.length - normQuery.length);
-      scored.push({ candidate, score: 0.5 + lengthDiff * 0.01 });
+      scored.push({
+        candidate,
+        score: SCORE_CONTAINS + lengthDiff * SCORE_CONTAINS_LENGTH_PENALTY
+      });
       continue;
     }
     const dist = levenshteinDistance(normQuery, normCand);
     if (dist <= maxDist) {
-      scored.push({ candidate, score: 1 + dist });
+      scored.push({ candidate, score: SCORE_BY_DISTANCE + dist });
     }
   }
   scored.sort((a, b3) => a.score - b3.score || a.candidate.localeCompare(b3.candidate));
@@ -5599,12 +5807,12 @@ function findClosestMatches(query, candidates, maxSuggestions = 3) {
 
 // src/core/writer.ts
 import fs4 from "fs";
-import path11 from "path";
+import path16 from "path";
 function writeEmittedFiles(files, targetDir, options2 = {}) {
   const force = Boolean(options2.force);
   const dryRun = Boolean(options2.dryRun);
   const seenPaths = options2.seenPaths ?? /* @__PURE__ */ new Map();
-  const resolvedRoot = path11.resolve(targetDir);
+  const resolvedRoot = path16.resolve(targetDir);
   const summary = {
     created: 0,
     overwritten: 0,
@@ -5619,8 +5827,8 @@ function writeEmittedFiles(files, targetDir, options2 = {}) {
     if (!rel || rel.split("/").some((seg) => seg === "..")) {
       throw new Error(`Refusing unsafe target path "${file.relativePath}".`);
     }
-    const absolutePath = path11.resolve(resolvedRoot, rel);
-    if (absolutePath !== resolvedRoot && !absolutePath.startsWith(resolvedRoot + path11.sep)) {
+    const absolutePath = path16.resolve(resolvedRoot, rel);
+    if (absolutePath !== resolvedRoot && !absolutePath.startsWith(resolvedRoot + path16.sep)) {
       throw new Error(`Target path escapes destination directory: "${file.relativePath}".`);
     }
     const emittedEarlier = seenPaths.get(absolutePath);
@@ -5654,7 +5862,7 @@ function writeEmittedFiles(files, targetDir, options2 = {}) {
         status = "overwritten";
         summary.overwritten += 1;
         if (!dryRun) {
-          fs4.mkdirSync(path11.dirname(absolutePath), { recursive: true });
+          fs4.mkdirSync(path16.dirname(absolutePath), { recursive: true });
           fs4.writeFileSync(absolutePath, file.content);
         }
       }
@@ -5662,7 +5870,7 @@ function writeEmittedFiles(files, targetDir, options2 = {}) {
       status = "created";
       summary.created += 1;
       if (!dryRun) {
-        fs4.mkdirSync(path11.dirname(absolutePath), { recursive: true });
+        fs4.mkdirSync(path16.dirname(absolutePath), { recursive: true });
         fs4.writeFileSync(absolutePath, file.content);
       }
     }
@@ -5708,7 +5916,7 @@ async function fetchAndDetect(source, fromFormat = "auto") {
   });
   if (detections.length === 0) {
     throw new Error(
-      `Could not detect any supported skill format (.cursor, .claude, .opencode, .codex, .agents) in "${fetchResult.source.displayLabel}".`
+      `Could not detect any supported skill format in "${fetchResult.source.displayLabel}".`
     );
   }
   return { fetchResult, detections };
@@ -5875,7 +6083,7 @@ function convertAndWrite(options2) {
 
 // src/core/sync.ts
 import fs5 from "fs";
-import path12 from "path";
+import path17 from "path";
 function entryKeepsConfigAssets(entry) {
   if (entry.includeConfigAssets !== void 0) {
     return entry.includeConfigAssets;
@@ -5890,7 +6098,7 @@ function entryKeepsConfigAssets(entry) {
   });
 }
 function planSyncForEntry(entry, emittedFiles, diskHashes, installDir) {
-  const resolvedRoot = path12.resolve(installDir);
+  const resolvedRoot = path17.resolve(installDir);
   const recordedByPath = /* @__PURE__ */ new Map();
   for (const f of entry.files) {
     recordedByPath.set(normalizePosixPath(f.path), f.sha256);
@@ -6033,16 +6241,16 @@ function planSyncForEntry(entry, emittedFiles, diskHashes, installDir) {
   };
 }
 function pruneEmptyParentDirs(filePath, stopDir) {
-  const resolvedStop = path12.resolve(stopDir);
-  let current = path12.dirname(path12.resolve(filePath));
-  while (current !== resolvedStop && current.startsWith(resolvedStop + path12.sep)) {
+  const resolvedStop = path17.resolve(stopDir);
+  let current = path17.dirname(path17.resolve(filePath));
+  while (current !== resolvedStop && current.startsWith(resolvedStop + path17.sep)) {
     try {
       const entries = fs5.readdirSync(current);
       if (entries.length > 0) {
         break;
       }
       fs5.rmdirSync(current);
-      current = path12.dirname(current);
+      current = path17.dirname(current);
     } catch {
       break;
     }
@@ -6054,7 +6262,7 @@ function applySyncPlan(plan, options2 = {}) {
   }
   for (const action of plan.actions) {
     if ((action.kind === "create" || action.kind === "update") && action.content) {
-      fs5.mkdirSync(path12.dirname(action.absolutePath), { recursive: true });
+      fs5.mkdirSync(path17.dirname(action.absolutePath), { recursive: true });
       fs5.writeFileSync(action.absolutePath, action.content);
     } else if (action.kind === "delete") {
       if (fs5.existsSync(action.absolutePath)) {
@@ -6715,8 +6923,8 @@ var cac = (name = "") => new CAC(name);
 // package.json
 var package_default = {
   name: "everyagent",
-  version: "1.2.0",
-  description: "Convert and install AI-agent skills between Cursor, Claude Code, OpenCode, Codex CLI, and Antigravity",
+  version: "1.3.0",
+  description: "Convert and install AI-agent skills between Cursor, Claude Code, OpenCode, Codex CLI, Antigravity, Windsurf, GitHub Copilot, Cline, and Roo Code",
   author: "liferes",
   repository: {
     type: "git",
@@ -6752,6 +6960,11 @@ var package_default = {
     "claude",
     "opencode",
     "codex",
+    "antigravity",
+    "windsurf",
+    "copilot",
+    "cline",
+    "roo",
     "cli"
   ],
   license: "MIT",
@@ -6779,7 +6992,9 @@ var CliUsageError = class extends Error {
 function parseTargetFormats(raw) {
   const tokens = raw.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean);
   if (tokens.length === 0) {
-    throw new CliUsageError("Target format cannot be empty. Expected: claude, opencode, codex, cursor, antigravity, or all.");
+    throw new CliUsageError(
+      `Target format cannot be empty. Expected: ${FORMAT_IDS.join(", ")}, or all.`
+    );
   }
   const resolved = [];
   for (const token of tokens) {
@@ -6913,7 +7128,7 @@ function parseSubcommand(subcmd, argv) {
   }
   cli.command("[source]", "Check skills for frontmatter, naming, and link issues").option(
     "-f, --from <format>",
-    "Override source auto-detection (auto, cursor, claude, opencode, codex, antigravity)",
+    `Override source auto-detection (auto, ${FORMAT_IDS.join(", ")})`,
     { default: "auto" }
   ).option("--json", "Output lint findings as JSON");
   cli.help();
@@ -6941,7 +7156,7 @@ function parseCliArgs(argv) {
     "Convert and install AI-agent skills from a GitHub repo or local directory"
   ).option(
     "-t, --to <targets>",
-    "Target format(s): claude, opencode, codex, cursor, antigravity, or all"
+    `Target format(s): ${FORMAT_IDS.join(", ")}, or all`
   ).option(
     "-s, --skill <names>",
     "Only translate specific skill(s), comma-separated"
@@ -6949,7 +7164,7 @@ function parseCliArgs(argv) {
     default: "."
   }).option(
     "-f, --from <format>",
-    "Override source auto-detection (auto, cursor, claude, opencode, codex, antigravity)",
+    `Override source auto-detection (auto, ${FORMAT_IDS.join(", ")})`,
     { default: "auto" }
   ).option("-g, --global", "Install to user global agent config directory").option("-y, --yes", "Skip confirmation prompt").option("-d, --dry-run", "Preview planned actions without writing files").option("--force", "Overwrite existing files instead of skipping").option(
     "--with-config",
@@ -7084,6 +7299,9 @@ function logWriteSummary(summary, options2 = {}) {
       "Two target formats share a file name and produced different content. Install them one at a time with -t <format> if you need both."
     );
   }
+  console.log(
+    import_picocolors.default.dim("Always double-check the output in case some skills were not detected.")
+  );
 }
 
 // src/cli/prompts.ts
@@ -8093,12 +8311,12 @@ async function promptTargetFormatSelection(sourceFormat, detectedTargets) {
     {
       value: "all_other",
       label: "All other formats",
-      hint: otherFormats.map((id) => FORMAT_META[id].configDir).join(", ")
+      hint: `${otherFormats.length} other formats`
     },
     {
       value: "all",
       label: "All formats",
-      hint: FORMAT_IDS.map((id) => FORMAT_META[id].configDir).join(", ")
+      hint: `all ${FORMAT_IDS.length} formats`
     },
     ...FORMAT_IDS.map((id) => {
       const hint = formatHints(id);
@@ -8425,7 +8643,8 @@ async function runInteractiveWizard() {
         { value: "custom", label: "Custom project path" },
         {
           value: "global",
-          label: "Global config directories (~/.claude, ~/.config/opencode, ~/.codex, ~/.cursor, ~/.gemini/config)"
+          label: "Global config directories",
+          hint: "user home folders for selected agents"
         }
       ]
     })
@@ -8537,6 +8756,7 @@ async function runInteractiveWizard() {
       "Two target formats share a file name and produced different content. Install them one at a time if you need both."
     );
   }
+  M2.info(import_picocolors5.default.dim("Always double-check the output in case some skills were not detected."));
   Se(`${import_picocolors5.default.green("Done!")} ${formatSummaryCounts(summary)}.`);
 }
 
@@ -8570,8 +8790,60 @@ function requireManifest(targetDir, global) {
   }
   return { manifestPath, manifest };
 }
+var SYNC_ACTION_STYLES = {
+  create: { verb: "\u2714 Created", colour: import_picocolors6.default.green, summary: "created" },
+  update: { verb: "\u2714 Updated", colour: import_picocolors6.default.green, summary: "updated" },
+  delete: { verb: "\u2716 Deleted", colour: import_picocolors6.default.red, summary: "deleted" },
+  "keep-local": {
+    verb: "\u26A0 Local change",
+    colour: import_picocolors6.default.yellow,
+    note: "(kept)",
+    summary: "local changes kept"
+  },
+  "keep-missing": {
+    verb: "\u26A0 Missing on disk",
+    colour: import_picocolors6.default.yellow,
+    note: "(left absent)",
+    summary: "missing"
+  },
+  untracked: {
+    verb: "\u26A0 Not tracked",
+    colour: import_picocolors6.default.yellow,
+    note: "(file exists, kept)",
+    summary: "not tracked"
+  },
+  unchanged: {
+    verb: "= Up to date",
+    colour: import_picocolors6.default.dim,
+    summary: "up to date",
+    silent: true
+  }
+};
+function printSyncPlanActions(plans, prefix) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const plan of plans) {
+    for (const action of plan.actions) {
+      counts.set(action.kind, (counts.get(action.kind) ?? 0) + 1);
+      const style = SYNC_ACTION_STYLES[action.kind];
+      if (style.silent) continue;
+      const display = plan.entry.global ? action.absolutePath : action.relativePath;
+      const note = style.note ? ` ${import_picocolors6.default.dim(style.note)}` : "";
+      console.log(`${prefix}${style.colour(style.verb)} ${display}${note}`);
+    }
+  }
+  return counts;
+}
+function formatSyncCounts(counts) {
+  return Object.keys(SYNC_ACTION_STYLES).filter((kind) => (counts.get(kind) ?? 0) > 0).map((kind) => `${counts.get(kind)} ${SYNC_ACTION_STYLES[kind].summary}`).join(", ");
+}
+function syncHeadline(parsed) {
+  if (parsed.check) {
+    return parsed.anyDrift ? "Drift detected!" : "All up to date!";
+  }
+  return parsed.dryRun ? "Dry run complete!" : "Sync complete!";
+}
 async function handleSync(parsed) {
-  const projectDir = path13.resolve(parsed.targetDir);
+  const projectDir = path18.resolve(parsed.targetDir);
   const { manifestPath, manifest } = requireManifest(projectDir, parsed.global);
   if (manifest.installs.length === 0) {
     if (parsed.json) {
@@ -8677,78 +8949,29 @@ async function handleSync(parsed) {
     );
   } else {
     const prefix = parsed.dryRun || parsed.check ? `${import_picocolors6.default.dim("[dry-run]")} ` : "";
-    let updated = 0;
-    let created = 0;
-    let deleted = 0;
-    let localKept = 0;
-    let missingKept = 0;
-    let untracked = 0;
-    let unchanged = 0;
-    for (const plan of plans) {
-      for (const action of plan.actions) {
-        const display = plan.entry.global ? action.absolutePath : action.relativePath;
-        switch (action.kind) {
-          case "create":
-            created += 1;
-            console.log(`${prefix}${import_picocolors6.default.green("\u2714 Created")} ${display}`);
-            break;
-          case "update":
-            updated += 1;
-            console.log(`${prefix}${import_picocolors6.default.green("\u2714 Updated")} ${display}`);
-            break;
-          case "delete":
-            deleted += 1;
-            console.log(`${prefix}${import_picocolors6.default.red("\u2716 Deleted")} ${display}`);
-            break;
-          case "keep-local":
-            localKept += 1;
-            console.log(
-              `${prefix}${import_picocolors6.default.yellow("\u26A0 Local change")} ${display} ${import_picocolors6.default.dim("(kept)")}`
-            );
-            break;
-          case "keep-missing":
-            missingKept += 1;
-            console.log(
-              `${prefix}${import_picocolors6.default.yellow("\u26A0 Missing on disk")} ${display} ${import_picocolors6.default.dim("(left absent)")}`
-            );
-            break;
-          case "untracked":
-            untracked += 1;
-            console.log(
-              `${prefix}${import_picocolors6.default.yellow("\u26A0 Not tracked")} ${display} ${import_picocolors6.default.dim("(file exists, kept)")}`
-            );
-            break;
-          case "unchanged":
-            unchanged += 1;
-            break;
-        }
-      }
-    }
-    const parts = [];
-    if (created > 0) parts.push(`${created} created`);
-    if (updated > 0) parts.push(`${updated} updated`);
-    if (deleted > 0) parts.push(`${deleted} deleted`);
-    if (localKept > 0) parts.push(`${localKept} local changes kept`);
-    if (missingKept > 0) parts.push(`${missingKept} missing`);
-    if (untracked > 0) parts.push(`${untracked} not tracked`);
-    if (unchanged > 0) parts.push(`${unchanged} up to date`);
-    const label = parsed.check ? anyDrift ? "Drift detected!" : "All up to date!" : parsed.dryRun ? "Dry run complete!" : "Sync complete!";
+    const counts = printSyncPlanActions(plans, prefix);
+    const headline = syncHeadline({
+      check: parsed.check,
+      dryRun: parsed.dryRun,
+      anyDrift
+    });
+    const colouredHeadline = anyDrift && parsed.check ? import_picocolors6.default.yellow(headline) : import_picocolors6.default.green(headline);
     console.log("");
-    console.log(`${import_picocolors6.default.bold(anyDrift && parsed.check ? import_picocolors6.default.yellow(label) : import_picocolors6.default.green(label))} ${parts.join(", ")}.`);
+    console.log(`${import_picocolors6.default.bold(colouredHeadline)} ${formatSyncCounts(counts)}.`);
   }
   if (parsed.check && anyDrift) {
     process.exit(1);
   }
 }
 async function handleList(parsed) {
-  const projectDir = path13.resolve(parsed.targetDir);
+  const projectDir = path18.resolve(parsed.targetDir);
   const { manifest } = requireManifest(projectDir, parsed.global);
   const items = await Promise.all(
     manifest.installs.map(async (entry) => {
       const drift = inspectInstallDrift(entry, projectDir);
       let sourceDrifted = false;
       const fetchTarget = resolveManifestSourceForFetch(entry, projectDir);
-      if (path13.isAbsolute(fetchTarget) && fs7.existsSync(fetchTarget)) {
+      if (path18.isAbsolute(fetchTarget) && fs7.existsSync(fetchTarget)) {
         try {
           const { fetchResult, detections } = await fetchAndDetect(
             fetchTarget,
@@ -8815,7 +9038,7 @@ async function handleList(parsed) {
   }
 }
 async function handleRemove(parsed) {
-  const projectDir = path13.resolve(parsed.targetDir);
+  const projectDir = path18.resolve(parsed.targetDir);
   const { manifestPath, manifest } = requireManifest(projectDir, parsed.global);
   const plan = planRemove(
     manifest,
@@ -8984,7 +9207,7 @@ async function main() {
   let targetFormats = parsed.targets;
   let wasAutoDetected = false;
   if (!targetFormats) {
-    const excludeSourceWhenLocal = fetchResult.source.type === "local" && !parsed.global && path13.resolve(fetchResult.source.localPath) === path13.resolve(parsed.targetDir);
+    const excludeSourceWhenLocal = fetchResult.source.type === "local" && !parsed.global && path18.resolve(fetchResult.source.localPath) === path18.resolve(parsed.targetDir);
     const detected = detectTargetFormats({
       targetDir: parsed.targetDir,
       global: parsed.global,
@@ -9007,7 +9230,7 @@ async function main() {
     } else {
       if (!process.stdin.isTTY) {
         throw new Error(
-          "Could not auto-detect any target format. Specify -t, --to <claude|opencode|codex|cursor|antigravity|all>."
+          `Could not auto-detect any target format. Specify -t, --to <${FORMAT_IDS.join("|")}|all>.`
         );
       }
       targetFormats = await promptTargetFormatSelection(chosenDetection.format);

@@ -55,7 +55,7 @@ export interface ConvertAndWriteResult {
   plannedTargets: PlannedTargetOutput[];
 }
 
-/** Fetch first, then let each adapter say what it recognises. */
+/** Explicit `--from` skips the vote; otherwise every adapter gets a say. */
 export async function fetchAndDetect(
   source: string,
   fromFormat: FormatId | 'auto' = 'auto',
@@ -92,14 +92,14 @@ export async function fetchAndDetect(
 
   if (detections.length === 0) {
     throw new Error(
-      `Could not detect any supported skill format (.cursor, .claude, .opencode, .codex, .agents) in "${fetchResult.source.displayLabel}".`,
+      `Could not detect any supported skill format in "${fetchResult.source.displayLabel}".`,
     );
   }
 
   return { fetchResult, detections };
 }
 
-/** Parse a detected format into the intermediate package representation. */
+/** `allowLoose` has to reach the parser, or a subpath fetch finds nothing to parse. */
 export function parseDetectedPackage(
   files: SourceFile[],
   detection: DetectionResult,
@@ -111,7 +111,7 @@ export function parseDetectedPackage(
   });
 }
 
-/** Only prompt the user to pick items when there is more than one selectable choice. */
+/** One choice needs no prompt: there is nothing to choose between. */
 export function shouldPromptTranslationScope(pkg: EveryagentPackage): boolean {
   const totalChoices =
     pkg.skills.length +
@@ -120,7 +120,7 @@ export function shouldPromptTranslationScope(pkg: EveryagentPackage): boolean {
   return totalChoices > 1;
 }
 
-/** Narrow a parsed package down to selected skills, root rules, and shared assets. */
+/** Applies a selection, or returns the package untouched when there is none. */
 export function filterPackage(
   pkg: EveryagentPackage,
   selection?: PackageSelection,
@@ -258,7 +258,6 @@ function assertUniqueOutputs(
   }
 }
 
-/** Source files in, one rewritten copy per target out, written to disk. */
 export function convertAndWrite(
   options: ConvertAndWriteOptions,
 ): ConvertAndWriteResult {

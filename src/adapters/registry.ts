@@ -1,9 +1,13 @@
 import type { FormatId, SourceFile } from '../core/ir.js';
 import { antigravityAdapter } from './antigravity.js';
 import { claudeAdapter } from './claude.js';
+import { clineAdapter } from './cline.js';
 import { codexAdapter } from './codex.js';
+import { copilotAdapter } from './copilot.js';
 import { cursorAdapter } from './cursor.js';
 import { opencodeAdapter } from './opencode.js';
+import { rooAdapter } from './roo.js';
+import { windsurfAdapter } from './windsurf.js';
 import {
   isRootRuleOnly,
   type Adapter,
@@ -17,6 +21,10 @@ const ADAPTERS: readonly Adapter[] = [
   opencodeAdapter,
   codexAdapter,
   antigravityAdapter,
+  windsurfAdapter,
+  copilotAdapter,
+  clineAdapter,
+  rooAdapter,
 ];
 
 const ADAPTER_MAP: Record<FormatId, Adapter> = {
@@ -25,6 +33,10 @@ const ADAPTER_MAP: Record<FormatId, Adapter> = {
   opencode: opencodeAdapter,
   codex: codexAdapter,
   antigravity: antigravityAdapter,
+  windsurf: windsurfAdapter,
+  copilot: copilotAdapter,
+  cline: clineAdapter,
+  roo: rooAdapter,
 };
 
 export function getAdapter(id: FormatId): Adapter {
@@ -56,6 +68,8 @@ export function isWeakRootRuleOnly(detection: DetectionResult): boolean {
 /**
  * Ask every adapter. AGENTS.md is shared by OpenCode and Codex, GEMINI.md by
  * Antigravity and Gemini CLI, so the ambiguous votes get sorted out afterwards.
+ * Only Claude and Cursor can match without a config dir, which is what a subpath
+ * fetch or a plain `skills/` folder leaves behind.
  */
 export function detectFormats(
   files: SourceFile[],

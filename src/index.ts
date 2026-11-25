@@ -4,6 +4,7 @@ import pc from 'picocolors';
 import { getAdapter, isWeakRootRuleOnly } from './adapters/registry.js';
 import { detectTargetFormats } from './core/detector.js';
 import {
+  FORMAT_IDS,
   FORMAT_META,
   isConfigAssetPath,
   normalizePosixPath,
@@ -110,6 +111,89 @@ function requireManifest(
     process.exit(1);
   }
   return { manifestPath, manifest };
+}
+
+type SyncActionKind = SyncEntryPlan['actions'][number]['kind'];
+
+interface SyncActionStyle {
+  readonly verb: string;
+  readonly colour: (text: string) => string;
+  readonly summary: string;
+  readonly note?: string;
+  /** `unchanged` is counted in the total but not worth a line per file. */
+  readonly silent?: boolean;
+}
+
+/** Insertion order is the order the closing summary prints its counts in. */
+const SYNC_ACTION_STYLES: Record<SyncActionKind, SyncActionStyle> = {
+  create: { verb: '✔ Created', colour: pc.green, summary: 'created' },
+  update: { verb: '✔ Updated', colour: pc.green, summary: 'updated' },
+  delete: { verb: '✖ Deleted', colour: pc.red, summary: 'deleted' },
+  'keep-local': {
+    verb: '⚠ Local change',
+    colour: pc.yellow,
+    note: '(kept)',
+    summary: 'local changes kept',
+  },
+  'keep-missing': {
+    verb: '⚠ Missing on disk',
+    colour: pc.yellow,
+    note: '(left absent)',
+    summary: 'missing',
+  },
+  untracked: {
+    verb: '⚠ Not tracked',
+    colour: pc.yellow,
+    note: '(file exists, kept)',
+    summary: 'not tracked',
+  },
+  unchanged: {
+    verb: '= Up to date',
+    colour: pc.dim,
+    summary: 'up to date',
+    silent: true,
+  },
+};
+
+function printSyncPlanActions(
+  plans: SyncEntryPlan[],
+  prefix: string,
+): Map<SyncActionKind, number> {
+  const counts = new Map<SyncActionKind, number>();
+
+  for (const plan of plans) {
+    for (const action of plan.actions) {
+      counts.set(action.kind, (counts.get(action.kind) ?? 0) + 1);
+      const style = SYNC_ACTION_STYLES[action.kind];
+      if (style.silent) continue;
+
+      const display = plan.entry.global
+        ? action.absolutePath
+        : action.relativePath;
+      const note = style.note ? ` ${pc.dim(style.note)}` : '';
+      console.log(`${prefix}${style.colour(style.verb)} ${display}${note}`);
+    }
+  }
+
+  return counts;
+}
+
+function formatSyncCounts(counts: Map<SyncActionKind, number>): string {
+  return (Object.keys(SYNC_ACTION_STYLES) as SyncActionKind[])
+    .filter((kind) => (counts.get(kind) ?? 0) > 0)
+    .map((kind) => `${counts.get(kind)} ${SYNC_ACTION_STYLES[kind].summary}`)
+    .join(', ');
+}
+
+function syncHeadline(parsed: {
+  check: boolean;
+  dryRun: boolean;
+  anyDrift: boolean;
+}): string {
+  if (parsed.check) {
+    return parsed.anyDrift ? 'Drift detected!' : 'All up to date!';
+  }
+  return parsed.dryRun ? 'Dry run complete!' : 'Sync complete!';
 }
 
 async function handleSync(parsed: {
@@ -247,73 +331,18 @@ async function handleSync(parsed: {
     );
   } else {
     const prefix = parsed.dryRun || parsed.check ? `${pc.dim('[dry-run]')} ` : '';
-    let updated = 0;
-    let created = 0;
-    let deleted = 0;
-    let localKept = 0;
-    let missingKept = 0;
-    let untracked = 0;
-    let unchanged = 0;
+    const counts = printSyncPlanActions(plans, prefix);
 
-    for (const plan of plans) {
-      for (const action of plan.actions) {
-        const display = plan.entry.global ? action.absolutePath : action.relativePath;
-        switch (action.kind) {
-          case 'create':
-            created += 1;
-            console.log(`${prefix}${pc.green('✔ Created')} ${display}`);
-            break;
-          case 'update':
-            updated += 1;
-            console.log(`${prefix}${pc.green('✔ Updated')} ${display}`);
-            break;
-          case 'delete':
-            deleted += 1;
-            console.log(`${prefix}${pc.red('✖ Deleted')} ${display}`);
-            break;
-          case 'keep-local':
-            localKept += 1;
-            console.log(
-              `${prefix}${pc.yellow('⚠ Local change')} ${display} ${pc.dim('(kept)')}`,
-            );
-            break;
-          case 'keep-missing':
-            missingKept += 1;
-            console.log(
-              `${prefix}${pc.yellow('⚠ Missing on disk')} ${display} ${pc.dim('(left absent)')}`,
-            );
-            break;
-          case 'untracked':
-            untracked += 1;
-            console.log(
-              `${prefix}${pc.yellow('⚠ Not tracked')} ${display} ${pc.dim('(file exists, kept)')}`,
-            );
-            break;
-          case 'unchanged':
-            unchanged += 1;
-            break;
-        }
-      }
-    }
+    const headline = syncHeadline({
+      check: parsed.check,
+      dryRun: parsed.dryRun,
+      anyDrift,
+    });
+    const colouredHeadline =
+      anyDrift && parsed.check ? pc.yellow(headline) : pc.green(headline);
 
-    const parts: string[] = [];
-    if (created > 0) parts.push(`${created} created`);
-    if (updated > 0) parts.push(`${updated} updated`);
-    if (deleted > 0) parts.push(`${deleted} deleted`);
-    if (localKept > 0) parts.push(`${localKept} local changes kept`);
-    if (missingKept > 0) parts.push(`${missingKept} missing`);
-    if (untracked > 0) parts.push(`${untracked} not tracked`);
-    if (unchanged > 0) parts.push(`${unchanged} up to date`);
-
-    const label = parsed.check
-      ? anyDrift
-        ? 'Drift detected!'
-        : 'All up to date!'
-      : parsed.dryRun
-        ? 'Dry run complete!'
-        : 'Sync complete!';
     console.log('');
-    console.log(`${pc.bold(anyDrift && parsed.check ? pc.yellow(label) : pc.green(label))} ${parts.join(', ')}.`);
+    console.log(`${pc.bold(colouredHeadline)} ${formatSyncCounts(counts)}.`);
   }
 
   if (parsed.check && anyDrift) {
@@ -656,7 +685,7 @@ async function main(): Promise<void> {
     } else {
       if (!process.stdin.isTTY) {
         throw new Error(
-          'Could not auto-detect any target format. Specify -t, --to <claude|opencode|codex|cursor|antigravity|all>.',
+          `Could not auto-detect any target format. Specify -t, --to <${FORMAT_IDS.join('|')}|all>.`,
         );
       }
       targetFormats = await promptTargetFormatSelection(chosenDetection.format);

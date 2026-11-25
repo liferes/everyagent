@@ -573,12 +573,12 @@ describe('config assets survive an upgrade from a pre-1.2.0 manifest', () => {
   });
 
   it('lets an explicit flag win over the recorded files', () => {
-    expect(entryKeepsConfigAssets({ ...legacyEntry([]), includeConfigAssets: false })).toBe(
-      false,
-    );
-    expect(entryKeepsConfigAssets({ ...legacyEntry([]), includeConfigAssets: true })).toBe(
-      true,
-    );
+    expect(
+      entryKeepsConfigAssets({ ...legacyEntry([]), includeConfigAssets: false }),
+    ).toBe(false);
+    expect(
+      entryKeepsConfigAssets({ ...legacyEntry([]), includeConfigAssets: true }),
+    ).toBe(true);
   });
 
   it('does not delete a settings file a legacy entry still tracks', () => {

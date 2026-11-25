@@ -4,6 +4,15 @@ Versioning: `x` big update, `y` mid fix, `z` small change.
 
 Releases before 1.1.0 shipped as `uniskill`. The entries below are left as they were written.
 
+## 1.3.0 (2026-11-26)
+
+Added four more formats: **Windsurf** (`.windsurf/skills/`, `.windsurfrules`), **GitHub Copilot** (`.github/skills/`, `.github/copilot-instructions.md`), **Cline** (`.cline/skills/`, `.clinerules`), and **Roo Code** (`.roo/skills/`, `.roorules`). All nine formats convert in any direction.
+
+- Copilot detection and path rewriting only touch `.github/skills/` and `.github/copilot-instructions.md`. Workflows and templates under `.github/` are ignored, and links like `.github/workflows/ci.yml` inside skill bodies stay as written. With `-g`, Copilot writes `copilot-instructions.md` flat inside `~/.copilot/`.
+- Kept the CLI flags and commands unchanged, trimmed the interactive target hints so 9 formats stay easy to scan, and added a reminder after writes to double-check the output in case any skills went undetected.
+
+Tests: 162.
+
 ## 1.2.0 (2026-11-25)
 
 Config files stop riding along by default.
@@ -12,6 +21,8 @@ Config files stop riding along by default.
 - `--with-config` copies them anyway. The wizard shows them as their own group, labelled, so picking them is a deliberate choice.
 - Everything else still travels: skills, root rules, companion files, `commands/`, `agents/`.
 - An install made before 1.2.0 keeps whatever config files it already tracks, so the first `sync` after upgrading deletes nothing.
+
+Tests: 98.
 
 ## 1.1.0 (2026-11-25)
 

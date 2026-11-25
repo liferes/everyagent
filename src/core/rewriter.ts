@@ -61,7 +61,7 @@ export function rewritePaths(
   const sourceMeta = FORMAT_META[sourceFormat];
   const targetMeta = FORMAT_META[targetFormat];
 
-  // 1. Skill folders first, so `.cursor/rules/<name>/` lands on `<target>/skills/<name>/`.
+  // Skill folders first, so `.cursor/rules/<name>/` lands on `<target>/skills/<name>/`.
   if (sourceFormat === 'cursor') {
     result = result.replace(
       /\.cursor\/rules\/([^/\s`'")\]]+)\.mdc\b/g,
@@ -99,14 +99,16 @@ export function rewritePaths(
     result = result.replace(sourceSkillsRe, `${targetMeta.configDir}/skills/`);
   }
 
-  // 2. Whatever is left: `.cursor/scripts/` -> `.claude/scripts/`.
-  const configDirRe = new RegExp(
-    `(^|[^A-Za-z0-9_.-])${escapeRegex(sourceMeta.configDir)}\\/`,
-    'g',
-  );
-  result = result.replace(configDirRe, `$1${targetMeta.configDir}/`);
+  // Copilot shares .github/ with workflows and templates, so skip generic rewriting.
+  if (sourceFormat !== 'copilot') {
+    const configDirRe = new RegExp(
+      `(^|[^A-Za-z0-9_.-])${escapeRegex(sourceMeta.configDir)}\\/`,
+      'g',
+    );
+    result = result.replace(configDirRe, `$1${targetMeta.configDir}/`);
+  }
 
-  // 3. Root rule names differ too: `.cursorrules` -> `CLAUDE.md`.
+  // Root rule names differ too: `.cursorrules` -> `CLAUDE.md`.
   if (sourceMeta.rootRuleFile !== targetMeta.rootRuleFile) {
     const rootRuleRe = new RegExp(
       `(^|[^A-Za-z0-9_.-])${escapeRegex(sourceMeta.rootRuleFile)}(?=$|[^A-Za-z0-9_.-])`,

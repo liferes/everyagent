@@ -63,7 +63,9 @@ export function parseTargetFormats(raw: string): FormatId[] {
     .filter(Boolean);
 
   if (tokens.length === 0) {
-    throw new CliUsageError('Target format cannot be empty. Expected: claude, opencode, codex, cursor, antigravity, or all.');
+    throw new CliUsageError(
+      `Target format cannot be empty. Expected: ${FORMAT_IDS.join(', ')}, or all.`,
+    );
   }
 
   const resolved: FormatId[] = [];
@@ -245,7 +247,7 @@ function parseSubcommand(
     .command('[source]', 'Check skills for frontmatter, naming, and link issues')
     .option(
       '-f, --from <format>',
-      'Override source auto-detection (auto, cursor, claude, opencode, codex, antigravity)',
+      `Override source auto-detection (auto, ${FORMAT_IDS.join(', ')})`,
       { default: 'auto' },
     )
     .option('--json', 'Output lint findings as JSON');
@@ -284,7 +286,7 @@ export function parseCliArgs(argv: string[]): CliParseResult {
     )
     .option(
       '-t, --to <targets>',
-      'Target format(s): claude, opencode, codex, cursor, antigravity, or all',
+      `Target format(s): ${FORMAT_IDS.join(', ')}, or all`,
     )
     .option(
       '-s, --skill <names>',
@@ -295,7 +297,7 @@ export function parseCliArgs(argv: string[]): CliParseResult {
     })
     .option(
       '-f, --from <format>',
-      'Override source auto-detection (auto, cursor, claude, opencode, codex, antigravity)',
+      `Override source auto-detection (auto, ${FORMAT_IDS.join(', ')})`,
       { default: 'auto' },
     )
     .option('-g, --global', 'Install to user global agent config directory')

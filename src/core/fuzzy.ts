@@ -18,6 +18,19 @@ const FORMAT_ALIASES: Record<string, FormatId> = {
   agents: 'antigravity',
   agent: 'antigravity',
   googleantigravity: 'antigravity',
+  windsurf: 'windsurf',
+  ws: 'windsurf',
+  windsurfrules: 'windsurf',
+  codeium: 'windsurf',
+  copilot: 'copilot',
+  ghcopilot: 'copilot',
+  githubcopilot: 'copilot',
+  github: 'copilot',
+  cline: 'cline',
+  clinerules: 'cline',
+  roo: 'roo',
+  roocode: 'roo',
+  roorules: 'roo',
 };
 
 /** Normalize a user token for forgiving matching (case, dots, hyphens, underscores, spaces). */
@@ -29,7 +42,7 @@ export function normalizeToken(raw: string): string {
     .replace(/[-_\s]+/g, '');
 }
 
-/** Standard Levenshtein edit distance between two strings. */
+/** Classic DP table with the memory trimmed to two rows. */
 export function levenshteinDistance(a: string, b: string): number {
   if (a === b) return 0;
   if (a.length === 0) return b.length;
@@ -89,7 +102,22 @@ export function suggestFormat(raw: string): FormatId | null {
   return bestDistance <= 2 ? bestFormat : null;
 }
 
-/** Find up to `maxSuggestions` closest candidate strings for a query. */
+// Suggestion scores sort ascending, and the bands must not overlap or a fuzzy
+// match could outrank an exact one.
+const SCORE_EXACT = -1;
+const SCORE_CONTAINS = 0.5;
+const SCORE_CONTAINS_LENGTH_PENALTY = 0.01;
+const SCORE_BY_DISTANCE = 1;
+
+// Below this length every candidate is "close", so a two-character typo is the
+// smallest correction worth suggesting.
+const MIN_EDIT_DISTANCE = 2;
+const LENGTH_TOLERANCE = 0.4;
+
+/**
+ * Exact match, then substring match, then edit distance, all in one ranked list.
+ * Used for "Did you mean…" on skill names.
+ */
 export function findClosestMatches(
   query: string,
   candidates: readonly string[],
@@ -100,7 +128,10 @@ export function findClosestMatches(
     return [];
   }
 
-  const maxDist = Math.max(2, Math.floor(normQuery.length * 0.4));
+  const maxDist = Math.max(
+    MIN_EDIT_DISTANCE,
+    Math.floor(normQuery.length * LENGTH_TOLERANCE),
+  );
   const scored: Array<{ candidate: string; score: number }> = [];
 
   for (const candidate of candidates) {
@@ -108,19 +139,22 @@ export function findClosestMatches(
     if (!normCand) continue;
 
     if (normCand === normQuery) {
-      scored.push({ candidate, score: -1 });
+      scored.push({ candidate, score: SCORE_EXACT });
       continue;
     }
 
     if (normCand.includes(normQuery) || normQuery.includes(normCand)) {
       const lengthDiff = Math.abs(normCand.length - normQuery.length);
-      scored.push({ candidate, score: 0.5 + lengthDiff * 0.01 });
+      scored.push({
+        candidate,
+        score: SCORE_CONTAINS + lengthDiff * SCORE_CONTAINS_LENGTH_PENALTY,
+      });
       continue;
     }
 
     const dist = levenshteinDistance(normQuery, normCand);
     if (dist <= maxDist) {
-      scored.push({ candidate, score: 1 + dist });
+      scored.push({ candidate, score: SCORE_BY_DISTANCE + dist });
     }
   }
 

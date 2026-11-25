@@ -83,7 +83,7 @@ function computeRangeDiff(oldLines: string[], newLines: string[]): DiffLine[] {
   return out;
 }
 
-/** Render a compact colored line diff between disk bytes and incoming bytes. */
+/** Line-level diff for the conflict prompt; capped at `maxLines` so one huge file cannot flood the terminal. */
 export function formatShortDiff(
   existing: Buffer,
   incoming: Buffer,

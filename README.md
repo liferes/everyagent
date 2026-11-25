@@ -1,6 +1,6 @@
 # everyagent
 
-Point it at a skill repo, name the agent you use, and it lays the files out the way that agent expects. Cursor rules in, Claude skills out. Or OpenCode, Codex, Antigravity. Any direction you need.
+Point it at a skill repo, name the agent you use, and it lays the files out the way that agent expects. Cursor rules in, Claude skills out. Or OpenCode, Codex, Antigravity, Windsurf, GitHub Copilot, Cline, and Roo Code. Any direction you need.
 
 Every source gets parsed into one intermediate shape and rebuilt for the target, which is how it avoids a converter for every format pair. Paths inside the markdown get rewritten on the way through: a `.cursor/scripts/` reference becomes `.claude/scripts/` when Claude is the destination, and the `.cursorrules` root file comes out as `CLAUDE.md`. Whatever sits next to a skill travels with it.
 
@@ -80,6 +80,10 @@ everyagent lint
 | OpenCode | `.opencode/skills/<name>/SKILL.md` | `AGENTS.md` | `name`, `description` | `~/.config/opencode/` |
 | Codex CLI | `.codex/skills/<name>/SKILL.md` | `AGENTS.md` | `name`, `description` | `~/.codex/` |
 | Antigravity | `.agents/skills/<name>/SKILL.md` | `GEMINI.md` | `name`, `description` | `~/.gemini/config/` |
+| Windsurf | `.windsurf/skills/<name>/SKILL.md` | `.windsurfrules` | `name`, `description` | `~/.codeium/windsurf/` |
+| Copilot | `.github/skills/<name>/SKILL.md` | `.github/copilot-instructions.md` | `name`, `description` | `~/.copilot/` |
+| Cline | `.cline/skills/<name>/SKILL.md` | `.clinerules` | `name`, `description` | `~/.cline/` |
+| Roo Code | `.roo/skills/<name>/SKILL.md` | `.roorules` | `name`, `description` | `~/.roo/` |
 
 ### Cursor is the odd one
 
@@ -91,14 +95,20 @@ Antigravity used to keep skills in `.agent/` before moving to `.agents/`. Both g
 
 `GEMINI.md` is not a giveaway on its own, since Gemini CLI writes the same file. It only counts as Antigravity when `.agents/` or `.agent/` is there, or when you say `-f antigravity`. Otherwise a Claude project carrying a `GEMINI.md` stays a Claude project.
 
+### Copilot shares `.github/`
+
+Because `.github/` holds CI workflows, issue templates, and PR templates too, Copilot detection only reads `.github/skills/` and `.github/copilot-instructions.md`. Everything else under `.github/` is ignored, and links like `.github/workflows/ci.yml` inside skill bodies stay untouched. With `-g`, Copilot writes `copilot-instructions.md` straight into `~/.copilot/` instead of nesting `.github/` inside it.
+
+Legacy rule folders such as `.windsurf/rules/`, `.github/instructions/`, `.clinerules/`, and `.roo/rules/` are not parsed as skills yet, so always double-check the generated files after converting an older repo.
+
 ## Flags
 
 | Flag | What it does | Default |
 | :--- | :--- | :--- |
-| `-t, --to <targets>` | Target format(s): `claude`, `opencode`, `codex`, `cursor`, `antigravity`, `all`. Comma-separated. | Prompted in a TTY |
+| `-t, --to <targets>` | Target format(s): `cursor`, `claude`, `opencode`, `codex`, `antigravity`, `windsurf`, `copilot`, `cline`, `roo`, `all`. Comma-separated. | Prompted in a TTY |
 | `-s, --skill <names>` | Only these skills. Root rules and shared config assets are left out. Comma-separated or repeated. | All skills |
 | `-p, --path <dir>` | Destination project directory, or pass it as the second positional arg | `.` |
-| `-f, --from <format>` | Override source detection: `auto`, `cursor`, `claude`, `opencode`, `codex`, `antigravity` | `auto` |
+| `-f, --from <format>` | Override source detection: `auto`, `cursor`, `claude`, `opencode`, `codex`, `antigravity`, `windsurf`, `copilot`, `cline`, `roo` | `auto` |
 | `-g, --global` | Install into your user-level agent config directory | `false` |
 | `-y, --yes` | Skip the confirmation prompt | `false` |
 | `-d, --dry-run` | Print the plan without touching disk | `false` |
@@ -182,7 +192,7 @@ npm link
 everyagent --help
 ```
 
-The tests cover the 5x5 conversion matrix, the tar extractor, the writer's skip and conflict paths, the manifest and sync planners, and the repo layouts that carry skills outside a config dir.
+The tests cover the 9x9 conversion matrix, Copilot `.github/` isolation, the tar extractor, the writer's skip and conflict paths, the manifest and sync planners, and the repo layouts that carry skills outside a config dir.
 
 ## License
 

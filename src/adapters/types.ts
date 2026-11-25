@@ -1,3 +1,4 @@
+import path from 'node:path';
 import matter from 'gray-matter';
 import {
   FORMAT_META,
@@ -131,6 +132,55 @@ function sanitizeSkillName(raw: string): string {
   return segments.join('/') || 'skill';
 }
 
+export function plural(count: number, word: string): string {
+  return `${count} ${word}${count === 1 ? '' : 's'}`;
+}
+
+interface DetectionEvidence {
+  /** Paths of entry-point files found for this format. */
+  skills: string[];
+  /** Config files that are not entry points. */
+  configPaths: string[];
+  hasRootRule: boolean;
+  allowLoose?: boolean;
+}
+
+/**
+ * Shared tail of every adapter's `detect`. Cursor counts each `.mdc` rule as a
+ * skill, so the numbers here are "entry points", not strictly `SKILL.md` files.
+ */
+export function buildDetection(
+  format: FormatId,
+  evidence: DetectionEvidence,
+): DetectionResult {
+  const meta = FORMAT_META[format];
+  const matchedPaths = [...evidence.skills, ...evidence.configPaths];
+  if (evidence.hasRootRule) {
+    matchedPaths.push(meta.rootRuleFile);
+  }
+
+  const summary: string[] = [];
+  if (evidence.skills.length > 0) {
+    summary.push(`${plural(evidence.skills.length, 'skill')} found`);
+  }
+  if (evidence.hasRootRule) {
+    summary.push(meta.rootRuleFile);
+  }
+  if (summary.length === 0) {
+    summary.push(plural(evidence.configPaths.length, 'config asset'));
+  }
+
+  return {
+    format,
+    label: meta.label,
+    skillCount: evidence.skills.length,
+    hasRootRule: evidence.hasRootRule,
+    summary: `${meta.label} — ${summary.join(', ')}`,
+    matchedPaths,
+    allowLoose: evidence.allowLoose,
+  };
+}
+
 export function detectSkillMdFormat(
   format: FormatId,
   files: SourceFile[],
@@ -148,10 +198,10 @@ export function detectSkillMdFormat(
     const p = normalizePosixPath(file.path);
     if (p.startsWith(prefix) && p.endsWith('/SKILL.md')) {
       skillPaths.push(p);
-    } else if (p.startsWith(configPrefix)) {
-      otherConfigPaths.push(p);
     } else if (p === meta.rootRuleFile) {
       hasRootRule = true;
+    } else if (p.startsWith(configPrefix)) {
+      otherConfigPaths.push(p);
     }
   }
 
@@ -176,31 +226,12 @@ export function detectSkillMdFormat(
     return null;
   }
 
-  const matchedPaths = [...skillPaths, ...otherConfigPaths];
-  if (hasRootRule) {
-    matchedPaths.push(meta.rootRuleFile);
-  }
-
-  const parts: string[] = [];
-  if (skillPaths.length > 0) {
-    parts.push(`${skillPaths.length} skill${skillPaths.length === 1 ? '' : 's'} found`);
-  }
-  if (hasRootRule) {
-    parts.push(meta.rootRuleFile);
-  }
-  if (parts.length === 0) {
-    parts.push(`${otherConfigPaths.length} config asset${otherConfigPaths.length === 1 ? '' : 's'}`);
-  }
-
-  return {
-    format,
-    label: meta.label,
-    skillCount: skillPaths.length,
+  return buildDetection(format, {
+    skills: skillPaths,
+    configPaths: otherConfigPaths,
     hasRootRule,
-    summary: `${meta.label} — ${parts.join(', ')}`,
-    matchedPaths,
     allowLoose,
-  };
+  });
 }
 
 export function parseSkillMdFormat(
@@ -425,7 +456,9 @@ export function emitSkillMdFormat(
     const normalized = rule.content.replace(/\r\n/g, '\n');
     const content = normalized.endsWith('\n') ? normalized : `${normalized}\n`;
     emitted.push({
-      relativePath: meta.rootRuleFile,
+      relativePath: isGlobal
+        ? path.posix.basename(meta.rootRuleFile)
+        : meta.rootRuleFile,
       content: Buffer.from(content, 'utf8'),
       targetFormat: format,
     });

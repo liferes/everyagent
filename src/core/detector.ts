@@ -31,29 +31,88 @@ const KNOWN_CONFIG_DIRS = [
   '.codex',
   '.agents',
   '.agent',
+  '.windsurf',
+  '.cline',
+  '.roo',
 ] as const;
 const KNOWN_ROOT_FILES = new Set([
   '.cursorrules',
   'CLAUDE.md',
   'AGENTS.md',
   'GEMINI.md',
+  '.windsurfrules',
+  '.clinerules',
+  '.roorules',
   'SKILL.md',
 ]);
 
-function existsSafe(targetPath: string): boolean {
+type PathKind = 'any' | 'dir' | 'file';
+
+/** A missing path and a path the OS refuses to stat are the same answer here: absent. */
+function pathHasKind(targetPath: string, kind: PathKind = 'any'): boolean {
+  let stats: fs.Stats;
   try {
-    return fs.existsSync(targetPath);
+    stats = fs.statSync(targetPath);
   } catch {
     return false;
   }
+  if (kind === 'dir') return stats.isDirectory();
+  if (kind === 'file') return stats.isFile();
+  return true;
 }
 
-function isDirSafe(targetPath: string): boolean {
-  try {
-    return fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory();
-  } catch {
-    return false;
-  }
+interface ProjectMarker {
+  readonly segments: readonly string[];
+  readonly kind: PathKind;
+}
+
+/**
+ * What a project looks like on disk, per format. Order inside a format does not
+ * matter; `FORMAT_IDS` sets the order formats are reported in.
+ *
+ * Single-name markers use `any` on purpose: Cline ships a directory-form
+ * `.clinerules/`, and checking the exact kind would miss it.
+ */
+const PROJECT_MARKERS: Record<FormatId, readonly ProjectMarker[]> = {
+  cursor: [
+    { segments: ['.cursor'], kind: 'any' },
+    { segments: ['.cursorrules'], kind: 'any' },
+  ],
+  claude: [
+    { segments: ['.claude'], kind: 'any' },
+    { segments: ['CLAUDE.md'], kind: 'any' },
+  ],
+  opencode: [{ segments: ['.opencode'], kind: 'any' }],
+  codex: [{ segments: ['.codex'], kind: 'any' }],
+  // `.agents/` only. GEMINI.md is shared with Gemini CLI, so on its own it
+  // cannot say which tool the project belongs to.
+  antigravity: [
+    { segments: ['.agents'], kind: 'any' },
+    { segments: ['.agent'], kind: 'any' },
+  ],
+  windsurf: [
+    { segments: ['.windsurf'], kind: 'any' },
+    { segments: ['.windsurfrules'], kind: 'any' },
+  ],
+  // Copilot shares `.github/` with workflows, so only these two paths count.
+  copilot: [
+    { segments: ['.github', 'skills'], kind: 'dir' },
+    { segments: ['.github', 'copilot-instructions.md'], kind: 'file' },
+  ],
+  cline: [
+    { segments: ['.cline'], kind: 'any' },
+    { segments: ['.clinerules'], kind: 'any' },
+  ],
+  roo: [
+    { segments: ['.roo'], kind: 'any' },
+    { segments: ['.roorules'], kind: 'any' },
+  ],
+};
+
+function hasProjectMarker(rootDir: string, format: FormatId): boolean {
+  return PROJECT_MARKERS[format].some((marker) =>
+    pathHasKind(path.join(rootDir, ...marker.segments), marker.kind),
+  );
 }
 
 function maybeExcludeSource(
@@ -75,43 +134,10 @@ export function detectTargetFormats(
 ): TargetDetectionResult {
   if (!options.global) {
     const resolvedDir = path.resolve(options.targetDir);
-    if (isDirSafe(resolvedDir)) {
-      const projectFormats: FormatId[] = [];
-
-      for (const id of FORMAT_IDS) {
-        if (id === 'cursor') {
-          if (
-            existsSafe(path.join(resolvedDir, '.cursor')) ||
-            existsSafe(path.join(resolvedDir, '.cursorrules'))
-          ) {
-            projectFormats.push(id);
-          }
-        } else if (id === 'claude') {
-          if (
-            existsSafe(path.join(resolvedDir, '.claude')) ||
-            existsSafe(path.join(resolvedDir, 'CLAUDE.md'))
-          ) {
-            projectFormats.push(id);
-          }
-        } else if (id === 'opencode') {
-          if (existsSafe(path.join(resolvedDir, '.opencode'))) {
-            projectFormats.push(id);
-          }
-        } else if (id === 'codex') {
-          if (existsSafe(path.join(resolvedDir, '.codex'))) {
-            projectFormats.push(id);
-          }
-        } else if (id === 'antigravity') {
-          // `.agents/` only. GEMINI.md is shared with Gemini CLI, so on its own
-          // it cannot say which tool the project belongs to.
-          if (
-            existsSafe(path.join(resolvedDir, '.agents')) ||
-            existsSafe(path.join(resolvedDir, '.agent'))
-          ) {
-            projectFormats.push(id);
-          }
-        }
-      }
+    if (pathHasKind(resolvedDir, 'dir')) {
+      const projectFormats = FORMAT_IDS.filter((id) =>
+        hasProjectMarker(resolvedDir, id),
+      );
 
       const filtered = maybeExcludeSource(projectFormats, options);
       if (filtered.length > 0) {
@@ -122,13 +148,9 @@ export function detectTargetFormats(
 
   const resolveGlobal =
     options.globalDirResolver ?? ((id: FormatId) => getAdapter(id).getGlobalDir());
-  const globalFormats: FormatId[] = [];
-
-  for (const id of FORMAT_IDS) {
-    if (existsSafe(resolveGlobal(id))) {
-      globalFormats.push(id);
-    }
-  }
+  const globalFormats = FORMAT_IDS.filter((id) =>
+    pathHasKind(resolveGlobal(id)),
+  );
 
   const filteredGlobal = maybeExcludeSource(globalFormats, options);
   if (filteredGlobal.length > 0) {
@@ -144,7 +166,7 @@ function collectDirFiles(
   out: SourceFile[],
 ): void {
   const startDir = path.join(rootDir, subDir);
-  if (!isDirSafe(startDir)) {
+  if (!pathHasKind(startDir, 'dir')) {
     return;
   }
 
@@ -177,7 +199,7 @@ export function detectLocalProjectSource(
   dir: string,
 ): { fetchResult: FetchResult; detections: DetectionResult[] } | null {
   const resolvedDir = path.resolve(dir);
-  if (!isDirSafe(resolvedDir)) {
+  if (!pathHasKind(resolvedDir, 'dir')) {
     return null;
   }
 
@@ -185,6 +207,19 @@ export function detectLocalProjectSource(
 
   for (const configDir of KNOWN_CONFIG_DIRS) {
     collectDirFiles(resolvedDir, configDir, files);
+  }
+
+  collectDirFiles(resolvedDir, path.join('.github', 'skills'), files);
+  const copilotInstructionsPath = path.join(
+    resolvedDir,
+    '.github',
+    'copilot-instructions.md',
+  );
+  if (pathHasKind(copilotInstructionsPath, 'file')) {
+    files.push({
+      path: '.github/copilot-instructions.md',
+      content: fs.readFileSync(copilotInstructionsPath),
+    });
   }
 
   let topEntries: fs.Dirent[] = [];

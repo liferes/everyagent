@@ -1,6 +1,16 @@
 import path from 'node:path';
 
-export const FORMAT_IDS = ['cursor', 'claude', 'opencode', 'codex', 'antigravity'] as const;
+export const FORMAT_IDS = [
+  'cursor',
+  'claude',
+  'opencode',
+  'codex',
+  'antigravity',
+  'windsurf',
+  'copilot',
+  'cline',
+  'roo',
+] as const;
 
 export type FormatId = (typeof FORMAT_IDS)[number];
 
@@ -41,6 +51,30 @@ export const FORMAT_META: Record<FormatId, FormatMeta> = {
     label: 'Antigravity (.agents/)',
     configDir: '.agents',
     rootRuleFile: 'GEMINI.md',
+  },
+  windsurf: {
+    id: 'windsurf',
+    label: 'Windsurf (.windsurf/)',
+    configDir: '.windsurf',
+    rootRuleFile: '.windsurfrules',
+  },
+  copilot: {
+    id: 'copilot',
+    label: 'Copilot (.github/skills/)',
+    configDir: '.github',
+    rootRuleFile: '.github/copilot-instructions.md',
+  },
+  cline: {
+    id: 'cline',
+    label: 'Cline (.cline/)',
+    configDir: '.cline',
+    rootRuleFile: '.clinerules',
+  },
+  roo: {
+    id: 'roo',
+    label: 'Roo Code (.roo/)',
+    configDir: '.roo',
+    rootRuleFile: '.roorules',
   },
 };
 
