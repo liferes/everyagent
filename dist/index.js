@@ -6983,7 +6983,7 @@ var cac = (name = "") => new CAC(name);
 // package.json
 var package_default = {
   name: "everyagent",
-  version: "1.4.0",
+  version: "1.4.1",
   description: "Convert and install AI-agent skills between Cursor, Claude Code, OpenCode, Codex CLI, Antigravity, Windsurf, GitHub Copilot, Cline, and Roo Code",
   author: "liferes",
   repository: {
@@ -7028,14 +7028,12 @@ var package_default = {
     "cli"
   ],
   license: "MIT",
-  dependencies: {
+  devDependencies: {
     "@clack/prompts": "^0.10.1",
+    "@types/node": "^22.15.3",
     cac: "^6.7.14",
     "gray-matter": "^4.0.3",
-    picocolors: "^1.1.1"
-  },
-  devDependencies: {
-    "@types/node": "^22.15.3",
+    picocolors: "^1.1.1",
     tsup: "^8.5.0",
     typescript: "^5.8.3",
     vitest: "^3.1.3"

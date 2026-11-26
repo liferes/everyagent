@@ -4,6 +4,15 @@ Versioning: `x` big update, `y` mid fix, `z` small change.
 
 Releases before 1.1.0 shipped as `uniskill`. The entries below are left as they were written.
 
+## 1.4.1 (2026-11-26)
+
+The published package installs nothing but itself.
+
+- `dist/index.js` has always been one self-contained bundle, but the four libraries it is built from were still listed as runtime dependencies, so `npm i -g everyagent` pulled 15 packages that were never loaded. They moved to `devDependencies`. Installing now adds one package, and the CLI behaves identically.
+- Same bundle, same behaviour, same flags.
+
+Tests: 173.
+
 ## 1.4.0 (2026-11-26)
 
 Skill folders that serve many harnesses at once no longer need `--from`.

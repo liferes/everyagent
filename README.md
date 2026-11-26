@@ -41,7 +41,7 @@ npx everyagent owner/repo -t claude
 No npm at all? Grab the single file from [Releases](https://github.com/liferes/everyagent/releases) and run it with plain Node, no `node_modules`:
 
 ```bash
-node everyagent-1.4.0.mjs owner/repo -t claude
+node everyagent-1.4.1.mjs owner/repo -t claude
 ```
 
 Bleeding edge from git: `npm i -g --allow-git=all github:liferes/everyagent`. The flag isn't optional, npm 12 blocks git installs by default.
