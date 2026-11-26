@@ -1,12 +1,36 @@
 # everyagent
 
-Point it at a skill repo, name the agent you use, and it lays the files out the way that agent expects. Cursor rules in, Claude skills out. Or OpenCode, Codex, Antigravity, Windsurf, GitHub Copilot, Cline, and Roo Code. Any direction you need.
+Nine agents, nine folder layouts, nine frontmatter dialects. everyagent reads skills, rules, and companion files out of one and writes them into any other.
 
-Every source gets parsed into one intermediate shape and rebuilt for the target, which is how it avoids a converter for every format pair. Paths inside the markdown get rewritten on the way through: a `.cursor/scripts/` reference becomes `.claude/scripts/` when Claude is the destination, and the `.cursorrules` root file comes out as `CLAUDE.md`. Whatever sits next to a skill travels with it.
+Cursor rules in, Claude skills out. Or OpenCode, Codex, Antigravity, Windsurf, GitHub Copilot, Cline, Roo Code. Any direction you need.
+
+[![CI](https://github.com/liferes/everyagent/actions/workflows/ci.yml/badge.svg)](https://github.com/liferes/everyagent/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](package.json)
+
+```text
+$ everyagent obra/superpowers -t opencode
+✔ Created .opencode/skills/brainstorming/SKILL.md
+✔ Created .opencode/skills/writing-plans/SKILL.md
+✔ Created AGENTS.md
+```
+
+## Why not just copy the folder
+
+Because a copied file usually loads as nothing, and nothing is silent.
+
+- Frontmatter keys are per-tool. Cursor wants `description`/`globs`/`alwaysApply`, Claude wants `name`/`description`/`allowed-tools`, and an unknown key is ignored or rejected depending on the agent.
+- Relative links break as soon as the folder depth changes. A `.cursor/scripts/build.sh` reference has to become `.claude/scripts/build.sh` or the skill is dead.
+- Root rules have nine different names. Copying `.cursorrules` into a Claude project gives you a file Claude never reads.
+- Re-running by hand clobbers your edits.
+
+Nine formats is 81 pairs, so everyagent doesn't do pairs. Every source gets parsed into one intermediate shape and rebuilt for the target. Paths inside the markdown get rewritten on the way through, and whatever sits next to a skill travels with it.
 
 Nothing on your disk gets overwritten without your say-so: `--force` up front, or the prompt that shows a diff and asks per file.
 
 ## Install
+
+Node 18 or newer.
 
 Not on npm yet. Install from GitHub:
 
@@ -20,6 +44,12 @@ Prefer it uninstalled:
 
 ```bash
 npx --yes --allow-git=all github:liferes/everyagent owner/repo -t claude
+```
+
+Or grab the single file from [Releases](https://github.com/liferes/everyagent/releases) and run it with plain Node, no install and no `node_modules`:
+
+```bash
+node everyagent-1.4.0.mjs owner/repo -t claude
 ```
 
 ## Usage
@@ -99,21 +129,7 @@ If you omit `-t`, `everyagent` checks the destination folder for existing agent 
 | Cline | `.cline/skills/<name>/SKILL.md` | `.clinerules` | `name`, `description` | `~/.cline/` |
 | Roo Code | `.roo/skills/<name>/SKILL.md` | `.roorules` | `name`, `description` | `~/.roo/` |
 
-### Cursor is the odd one
-
-Cursor keeps rules as single `.mdc` files instead of a folder with a `SKILL.md` inside, so converting in that direction loses a bit of shape. Glob patterns have nowhere to live in `SKILL.md` frontmatter, so they get folded into the description as `(Applies to: ...)`. Going back the other way, `description` lands in the `.mdc` frontmatter and `alwaysApply` comes out as `false`.
-
-### Antigravity and its old folder name
-
-Antigravity used to keep skills in `.agent/` before moving to `.agents/`. Both get read, and the files come out under `.agents/` even when Antigravity is the target too. If a repo has a copy in each, the `.agents/` one wins.
-
-`GEMINI.md` is not a giveaway on its own, since Gemini CLI writes the same file. It only counts as Antigravity when `.agents/` or `.agent/` is there, or when you say `-f antigravity`. Otherwise a Claude project carrying a `GEMINI.md` stays a Claude project.
-
-### Copilot shares `.github/`
-
-Because `.github/` holds CI workflows, issue templates, and PR templates too, Copilot detection only reads `.github/skills/` and `.github/copilot-instructions.md`. Everything else under `.github/` is ignored, and links like `.github/workflows/ci.yml` inside skill bodies stay untouched. With `-g`, Copilot writes `copilot-instructions.md` straight into `~/.copilot/` instead of nesting `.github/` inside it.
-
-Legacy rule folders such as `.windsurf/rules/`, `.github/instructions/`, `.clinerules/`, and `.roo/rules/` are not parsed as skills yet, so always double-check the generated files after converting an older repo.
+Some formats have edges that don't fit the table: Cursor's single-file rules, Antigravity's old `.agent/` folder, Copilot sharing `.github/` with CI, the `AGENTS.md` collision between OpenCode and Codex. All of it is in [docs/quirks.md](docs/quirks.md).
 
 ## Flags
 
@@ -137,7 +153,7 @@ Skills, root rules, companion assets (references, scripts), and shared assets li
 
 Settings, hooks, and MCP files are not. `settings.json`, `settings.local.json`, `mcp.json`, `.mcp.json`, and anything under `hooks/` stay behind unless you pass `--with-config`. They can hold API keys and env vars, and they only mean something to the tool that wrote them. The interactive wizard lists them as a separate group so you can pick them on purpose.
 
-## Skipping, replacing, and the one collision
+## Skipping, replacing, and conflicts
 
 Identical files already on disk stay quiet as `unchanged`. When existing files differ:
 
@@ -161,7 +177,7 @@ everyagent sync --check         # exit 1 if anything drifted (for CI)
 everyagent list [dest]          # show installed sources, formats, skills, and local drift
 everyagent remove <source|--all> [dest]  # delete untouched files, keep edited ones
 everyagent remove <source> -s <names> [dest]  # drop named skills, keep the rest of the install
-everyagent lint [source]        # check frontmatter, duplicates, naming, description length, links
+everyagent lint [source]         # check frontmatter, duplicates, naming, description length, links
 ```
 
 `remove -s` deletes the folders you name and leaves everything else tracked, so the rest of the install keeps working. Root rules and shared config stay, because dropping those would break skills you asked to keep. An edited file is kept and reported instead of deleted, and that is not an error: the exit code stays `0`. A name that is not installed exits `1` and lists what is there, so a typo removes nothing.
@@ -170,26 +186,15 @@ everyagent lint [source]        # check frontmatter, duplicates, naming, descrip
 
 `sync`, `list`, and `lint` accept `--json`. Exit codes: `0` clean, `1` on drift (`--check`), an unknown skill name, or lint errors, `2` on bad arguments.
 
-One case is worth knowing about. OpenCode and Codex both call their root rule `AGENTS.md`, but each rewrites internal paths for its own config directory, so the two copies differ. Convert to both in a single run and the second one loses:
+## Tested against
 
-```text
-✔ Created AGENTS.md
-⚠ Conflict AGENTS.md (second target wanted different content; first kept)
-```
+Real repos, not fixtures:
 
-That counts as a conflict rather than a skip, since no file of yours was involved. Install them separately if you need both:
-
-```bash
-everyagent owner/repo -t opencode
-everyagent owner/repo -t codex --force
-```
-
-Two skills that share the same `name:` would land on the same file. The run stops before writing anything instead of letting one silently win:
-
-```text
-✖ Two source items both write ".claude/skills/review/SKILL.md" with different content.
-  Rename one of them, or install them separately with --skill.
-```
+| Source | What happened |
+| :--- | :--- |
+| [`obra/superpowers`](https://github.com/obra/superpowers) | 15 skills, read as Claude, installed into OpenCode. Needs `-f claude`: the repo ships OpenCode and Antigravity layouts too, so auto-detection is ambiguous. |
+| [`anthropics/skills`](https://github.com/anthropics/skills) | 19 skills / 442 files out of a repo that keeps them outside any config dir. |
+| A local `~/.config/opencode/skills` folder | 30 skills / 276 files into Antigravity's `~/.gemini/config/skills`. |
 
 ## Changelog
 

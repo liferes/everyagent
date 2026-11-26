@@ -1,0 +1,52 @@
+name: Conversion problem
+description: A skill or rule came out wrong, or the wrong format was detected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A wrong conversion is almost always detection or frontmatter. The three fields below usually find it in one pass.
+  - type: input
+    id: version
+    attributes:
+      label: everyagent version
+      description: Output of `everyagent --version`
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Source
+      description: The repo or folder you converted from, and the format you told it
+      placeholder: https://github.com/owner/repo -f claude
+    validations:
+      required: true
+  - type: input
+    id: target
+    attributes:
+      label: Target
+      placeholder: -t opencode
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What came out
+      description: The generated file, or the status lines from the run. Trim anything private.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: wanted
+    attributes:
+      label: What you expected
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: Output of `node --version`
+    validations:
+      required: true
