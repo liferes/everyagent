@@ -4,6 +4,7 @@ Nine agents, nine folder layouts, nine frontmatter dialects. everyagent reads sk
 
 Cursor rules in, Claude skills out. Or OpenCode, Codex, Antigravity, Windsurf, GitHub Copilot, Cline, Roo Code. Any direction you need.
 
+[![npm](https://img.shields.io/npm/v/everyagent.svg)](https://www.npmjs.com/package/everyagent)
 [![CI](https://github.com/liferes/everyagent/actions/workflows/ci.yml/badge.svg)](https://github.com/liferes/everyagent/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](package.json)
@@ -32,25 +33,23 @@ Nothing on your disk gets overwritten without your say-so: `--force` up front, o
 
 Node 18 or newer.
 
-Not on npm yet. Install from GitHub:
-
 ```bash
-npm i -g --allow-git=all github:liferes/everyagent
+npm i -g everyagent
 ```
 
-npm 12 blocks git installs by default, so that flag isn't optional. It ships prebuilt, so there's nothing to compile.
-
-Prefer it uninstalled:
+Or skip the install:
 
 ```bash
-npx --yes --allow-git=all github:liferes/everyagent owner/repo -t claude
+npx everyagent owner/repo -t claude
 ```
 
-Or grab the single file from [Releases](https://github.com/liferes/everyagent/releases) and run it with plain Node, no install and no `node_modules`:
+No npm at all? Grab the single file from [Releases](https://github.com/liferes/everyagent/releases) and run it with plain Node, no `node_modules`:
 
 ```bash
 node everyagent-1.4.0.mjs owner/repo -t claude
 ```
+
+Bleeding edge from git: `npm i -g --allow-git=all github:liferes/everyagent`. The flag isn't optional, npm 12 blocks git installs by default.
 
 ## Usage
 
