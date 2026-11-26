@@ -9,12 +9,7 @@ Cursor rules in, Claude skills out. Or OpenCode, Codex, Antigravity, Windsurf, G
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](package.json)
 
-```text
-$ everyagent obra/superpowers -t opencode
-✔ Created .opencode/skills/brainstorming/SKILL.md
-✔ Created .opencode/skills/writing-plans/SKILL.md
-✔ Created AGENTS.md
-```
+<img src="docs/demo.png" alt="everyagent converting obra/superpowers from Claude Code into OpenCode" width="880">
 
 ## Why not just copy the folder
 
@@ -191,7 +186,7 @@ Real repos, not fixtures:
 
 | Source | What happened |
 | :--- | :--- |
-| [`obra/superpowers`](https://github.com/obra/superpowers) | 15 skills, read as Claude, installed into OpenCode. Needs `-f claude`: the repo ships OpenCode and Antigravity layouts too, so auto-detection is ambiguous. |
+| [`obra/superpowers`](https://github.com/obra/superpowers) | 15 skills, 80 files. Read as Claude with no `--from`, even though the repo also ships OpenCode and Antigravity layouts. |
 | [`anthropics/skills`](https://github.com/anthropics/skills) | 19 skills / 442 files out of a repo that keeps them outside any config dir. |
 | A local `~/.config/opencode/skills` folder | 30 skills / 276 files into Antigravity's `~/.gemini/config/skills`. |
 
