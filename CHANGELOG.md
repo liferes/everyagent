@@ -4,6 +4,17 @@ Versioning: `x` big update, `y` mid fix, `z` small change.
 
 Releases before 1.1.0 shipped as `uniskill`. The entries below are left as they were written.
 
+## 1.4.0 (2026-11-26)
+
+Skill folders that serve many harnesses at once no longer need `--from`.
+
+- A config folder only counts as evidence when it holds a `SKILL.md`. Repos like `obra/superpowers` ship `.opencode/plugins/`, `.agents/`, and a plugin manifest for every tool next to one real `skills/` folder; those used to read as two competing formats and stopped the run with `Multiple formats detected`. Now the repo-wide `skills/` folder wins and the run just goes. A source that truly holds no skills gets `No SKILL.md found` and the config paths it did find, instead of a format menu.
+- `remove -s <names>` drops named skills and keeps the rest of the install tracked, including root rules and shared config. A name that is not installed exits `1` and lists what is there, so a typo deletes nothing.
+- `list` prints the skill names under each install and marks edited ones with `*`, which is the set `remove -s` would refuse to delete.
+- An edited file during `remove` is now kept and reported instead of failing the command. The deletion had already happened before the old `exit 1`, so scripts and agents read a success as a failure and retried.
+
+Tests: 173.
+
 ## 1.3.0 (2026-11-26)
 
 Added four more formats: **Windsurf** (`.windsurf/skills/`, `.windsurfrules`), **GitHub Copilot** (`.github/skills/`, `.github/copilot-instructions.md`), **Cline** (`.cline/skills/`, `.clinerules`), and **Roo Code** (`.roo/skills/`, `.roorules`). All nine formats convert in any direction.

@@ -84,10 +84,28 @@ export function detectFormats(
     }
   }
 
+  // Only a SKILL.md says the project holds skills. A config folder alone is
+  // not evidence: repos that serve many harnesses ship `.opencode/plugins/` and
+  // `.agents/` manifests beside their real `skills/` folder, and those used to
+  // read as two competing formats that blocked the run. So when no config dir
+  // holds a SKILL.md, a repo-wide `skills/<name>/SKILL.md` layout answers
+  // better than any of them.
+  if (!strictResults.some((r) => r.skillCount > 0)) {
+    const looseResults: DetectionResult[] = [];
+    for (const candidate of [claudeAdapter, cursorAdapter]) {
+      const detected = candidate.detect(files, { ...options, allowLoose: true });
+      if (detected) {
+        looseResults.push(detected);
+      }
+    }
+    if (looseResults.length > 0) {
+      return looseResults;
+    }
+  }
+
   if (strictResults.length > 0) {
-    // A format that found skills or a config folder owns the project. One that
-    // only matched its root rule file does not, or a Claude repo carrying a
-    // GEMINI.md would come back as two formats and block every non-TTY run.
+    // A shared root rule (AGENTS.md, GEMINI.md) does not say which tool owns the
+    // project, so it only stands when nothing else turned up.
     const winners = strictResults.filter(
       (r) => !SHARED_ROOT_RULE_FORMATS.has(r.format) || !isRootRuleOnly(r),
     );
@@ -97,15 +115,5 @@ export function detectFormats(
     return winners.length > 0 ? winners : strictResults;
   }
 
-  // Fallback: loose detection when the config dir is gone, as with a subpath
-  // fetch or a repo that keeps skills in a plain `skills/` folder.
-  const looseResults: DetectionResult[] = [];
-  for (const candidate of [claudeAdapter, cursorAdapter]) {
-    const detected = candidate.detect(files, { ...options, allowLoose: true });
-    if (detected) {
-      looseResults.push(detected);
-    }
-  }
-
-  return looseResults;
+  return [];
 }

@@ -44,6 +44,7 @@ export type CliParseResult =
   | {
       kind: 'remove';
       source?: string;
+      skills?: string[];
       all: boolean;
       targetDir: string;
       global: boolean;
@@ -215,6 +216,10 @@ function parseSubcommand(
     cli
       .command('[source] [dest]', 'Remove untouched files installed from a source')
       .option('--all', 'Remove all tracked installs in the manifest')
+      .option(
+        '-s, --skill <names>',
+        'Only remove specific skill(s), comma-separated',
+      )
       .option('-p, --path <dir>', 'Project directory', { default: '.' })
       .option('-g, --global', 'Remove from global manifest (~/.everyagent/manifest.json)')
       .option('-d, --dry-run', 'Preview removals without touching disk');
@@ -223,6 +228,11 @@ function parseSubcommand(
     const opts = parsed.options as Record<string, unknown>;
     if (opts.help || opts.version) return { kind: 'help_or_version' };
     const all = Boolean(opts.all);
+    const skills =
+      opts.skill !== undefined ? parseSkillSelection(opts.skill) : undefined;
+    if (all && skills) {
+      throw new CliUsageError('Use either --all or --skill, not both.');
+    }
     const source = all ? undefined : parsed.args[0];
     const destArg = all ? parsed.args[0] : parsed.args[1];
     if (!all && !source) {
@@ -236,6 +246,7 @@ function parseSubcommand(
     return {
       kind: 'remove',
       ...(source ? { source } : {}),
+      ...(skills ? { skills } : {}),
       all,
       targetDir: resolveExplicitPath(subArgv, opts, destArg),
       global: Boolean(opts.global),
@@ -314,7 +325,8 @@ export function parseCliArgs(argv: string[]): CliParseResult {
     .example('everyagent https://github.com/u/r -t opencode ./app -y')
     .example('everyagent sync')
     .example('everyagent list')
-    .example('everyagent remove owner/repo');
+    .example('everyagent remove owner/repo')
+    .example('everyagent remove owner/repo -s react-hooks,api-design');
 
   cli.help();
   cli.version(pkg.version);

@@ -6,6 +6,7 @@ import {
   hashBuffer,
   hashFile,
   matchesInstallSource,
+  type FileDriftStatus,
   type ManifestFileEntry,
   type ManifestInstallEntry,
   type EveryagentManifest,
@@ -62,8 +63,73 @@ export interface RemovePlan {
   deletedPaths: string[];
   refusedPaths: string[];
   alreadyMissingPaths: string[];
+  /** Requested with `--skill` but absent from the matched install(s). */
+  missingSkills: string[];
   nextManifest: EveryagentManifest;
   privateTargets: Array<{ absolutePath: string; installDir: string }>;
+}
+
+/**
+ * Skill folders in a file list. The folder holding a `SKILL.md` is the skill,
+ * which is the only boundary every target format agrees on.
+ */
+export interface SkillGroup {
+  name: string;
+  /** Folder path with a trailing slash, relative to the install dir. */
+  dir: string;
+  /** True when a file in this skill was edited, which `remove` keeps. */
+  drifted: boolean;
+}
+
+export function groupSkills(
+  files: ReadonlyArray<{ path: string; status?: FileDriftStatus }>,
+): SkillGroup[] {
+  const groups = new Map<string, SkillGroup>();
+  for (const file of files) {
+    const rel = normalizePosixPath(file.path);
+    if (!rel.endsWith('/SKILL.md')) continue;
+    const dir = rel.slice(0, -'/SKILL.md'.length);
+    const name = dir.split('/').pop();
+    if (name && !groups.has(`${dir}/`)) {
+      groups.set(`${dir}/`, { name, dir: `${dir}/`, drifted: false });
+    }
+  }
+  for (const file of files) {
+    // Only an edited file is kept by `remove -s`. A missing one is just gone,
+    // so starring it would promise a skill the removal still deletes.
+    if (file.status !== 'modified') continue;
+    const rel = normalizePosixPath(file.path);
+    for (const group of groups.values()) {
+      if (rel.startsWith(group.dir)) {
+        group.drifted = true;
+        break;
+      }
+    }
+  }
+  return [...groups.values()];
+}
+
+/** Skill folders to touch, plus the requested names that matched nothing. */
+function resolveSkillDirs(
+  files: ManifestFileEntry[],
+  wanted: string[],
+): { dirs: string[]; missing: string[] } {
+  const byName = new Map<string, string>();
+  for (const group of groupSkills(files)) {
+    byName.set(group.name.toLowerCase(), group.dir);
+  }
+
+  const dirs: string[] = [];
+  const missing: string[] = [];
+  for (const name of wanted) {
+    const dir = byName.get(name.toLowerCase());
+    if (dir) {
+      dirs.push(dir);
+    } else {
+      missing.push(name);
+    }
+  }
+  return { dirs, missing };
 }
 
 /** Pure sync planner comparing manifest records, freshly emitted files, and disk hashes. */
@@ -272,7 +338,7 @@ export function applySyncPlan(
 
 export function planRemove(
   manifest: EveryagentManifest,
-  selector: { source?: string; all?: boolean },
+  selector: { source?: string; all?: boolean; skills?: string[] },
   projectDir: string,
 ): RemovePlan {
   const matchedEntries = selector.all
@@ -285,6 +351,7 @@ export function planRemove(
   const deletedPaths: string[] = [];
   const refusedPaths: string[] = [];
   const alreadyMissingPaths: string[] = [];
+  const missingSkills: string[] = [];
   const privateTargets: Array<{ absolutePath: string; installDir: string }> = [];
   const nextInstalls: ManifestInstallEntry[] = [];
 
@@ -294,11 +361,32 @@ export function planRemove(
       continue;
     }
 
+    // `--skill` narrows the job to those folders. Everything else stays
+    // tracked, including root rules and shared config, because dropping those
+    // would silently break the rest of the install.
+    const scoped = selector.skills
+      ? resolveSkillDirs(entry.files, selector.skills)
+      : undefined;
+    if (scoped) {
+      for (const name of scoped.missing) {
+        if (!missingSkills.includes(name)) {
+          missingSkills.push(name);
+        }
+      }
+    }
+    // An empty match list still counts as scoping: a typo must remove nothing,
+    // never fall through to the whole install.
+    const scopedDirs = scoped ? scoped.dirs : null;
+
     const installDir = getInstallDir(entry, projectDir);
     const remainingFiles: ManifestFileEntry[] = [];
 
     for (const file of entry.files) {
       const rel = normalizePosixPath(file.path);
+      if (scopedDirs && !scopedDirs.some((dir) => rel.startsWith(dir))) {
+        remainingFiles.push(file);
+        continue;
+      }
       const abs = resolveWithin(installDir, rel);
       const diskHash = hashFile(abs);
       const display = entry.global ? abs : rel;
@@ -327,6 +415,7 @@ export function planRemove(
     deletedPaths,
     refusedPaths,
     alreadyMissingPaths,
+    missingSkills,
     nextManifest: {
       version: 1,
       installs: nextInstalls,

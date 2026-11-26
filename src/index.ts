@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import pc from 'picocolors';
 import { getAdapter, isWeakRootRuleOnly } from './adapters/registry.js';
+import { plural } from './adapters/types.js';
 import { detectTargetFormats } from './core/detector.js';
 import {
   FORMAT_IDS,
@@ -41,6 +42,7 @@ import {
   entryKeepsConfigAssets,
   planRemove,
   planSyncForEntry,
+  groupSkills,
   type SyncEntryPlan,
 } from './core/sync.js';
 import type { WriteSummary } from './core/writer.js';
@@ -350,6 +352,24 @@ async function handleSync(parsed: {
   }
 }
 
+/** Names on as few lines as fit, so a 15-skill install stays readable. */
+function wrapNames(names: string[], width: number): string[] {
+  const lines: string[] = [];
+  let current = '';
+  for (const name of names) {
+    if (current && current.length + 2 + name.length > width) {
+      lines.push(current);
+      current = name;
+    } else {
+      current = current ? `${current}  ${name}` : name;
+    }
+  }
+  if (current) {
+    lines.push(current);
+  }
+  return lines;
+}
+
 async function handleList(parsed: {
   targetDir: string;
   global: boolean;
@@ -407,6 +427,7 @@ async function handleList(parsed: {
         sourceDrifted,
         status,
         files: drift.files,
+        skills: groupSkills(drift.files),
       };
     }),
   );
@@ -432,17 +453,31 @@ async function handleList(parsed: {
         ? pc.yellow(` (${driftParts.join(', ')})`)
         : pc.green(' (clean)');
 
+    const countLabel =
+      item.skills.length > 0
+        ? `${plural(item.skills.length, 'skill')}, ${plural(item.fileCount, 'file')}`
+        : plural(item.fileCount, 'file');
+
     console.log(
-      `${pc.cyan('•')} ${pc.bold(srcLabel)} → ${FORMAT_META[item.targetFormat].label} · ${item.fileCount} file${item.fileCount === 1 ? '' : 's'}${driftText}`,
+      `${pc.cyan('•')} ${pc.bold(srcLabel)} → ${FORMAT_META[item.targetFormat].label} · ${countLabel}${driftText}`,
     );
     if (item.global) {
       console.log(`  ${pc.dim(item.installDir)}`);
+    }
+    if (item.skills.length > 0) {
+      const names = item.skills.map((skill) =>
+        skill.drifted ? `${skill.name}*` : skill.name,
+      );
+      for (const line of wrapNames(names, 74)) {
+        console.log(`    ${line}`);
+      }
     }
   }
 }
 
 async function handleRemove(parsed: {
   source?: string;
+  skills?: string[];
   all: boolean;
   targetDir: string;
   global: boolean;
@@ -453,7 +488,11 @@ async function handleRemove(parsed: {
 
   const plan = planRemove(
     manifest,
-    { source: parsed.source, all: parsed.all },
+    {
+      source: parsed.source,
+      all: parsed.all,
+      ...(parsed.skills ? { skills: parsed.skills } : {}),
+    },
     projectDir,
   );
 
@@ -462,6 +501,17 @@ async function handleRemove(parsed: {
     logError(
       `No matching install for "${parsed.source ?? '--all'}" in manifest.${available.length > 0 ? ` Installed sources: ${available.join(', ')}` : ''}`,
     );
+    process.exit(1);
+  }
+
+  if (plan.missingSkills.length > 0) {
+    logError(`Not installed: ${plan.missingSkills.join(', ')}.`);
+    const available = [
+      ...new Set(plan.matchedEntries.flatMap((e) => groupSkills(e.files).map((s) => s.name))),
+    ];
+    if (available.length > 0) {
+      logInfo(`Installed skills: ${available.join(', ')}.`);
+    }
     process.exit(1);
   }
 
@@ -478,15 +528,15 @@ async function handleRemove(parsed: {
     console.log(`${prefix}${pc.dim(`= Already missing ${rel}`)}`);
   }
 
+  // Edited files stay on disk and stay tracked. That is the expected outcome,
+  // not a failure, so the exit code has to say so.
   if (plan.refusedPaths.length > 0) {
-    console.log('');
     logWarn(
-      `Refused to delete ${plan.refusedPaths.length} locally edited file${plan.refusedPaths.length === 1 ? '' : 's'} (content differs from manifest):`,
+      `Kept ${plan.refusedPaths.length} locally edited file${plan.refusedPaths.length === 1 ? '' : 's'} (content differs from manifest):`,
     );
     for (const rel of plan.refusedPaths) {
       console.log(`  ${rel}`);
     }
-    process.exit(1);
   }
 
   logSuccess(
@@ -592,6 +642,13 @@ async function main(): Promise<void> {
     if (!process.stdin.isTTY) {
       const allSharedRoots = detections.every(isWeakRootRuleOnly);
       if (!allSharedRoots) {
+        if (detections.every((d) => d.skillCount === 0)) {
+          throw new Error(
+            `No SKILL.md found in ${fetchResult.source.displayLabel}. everyagent converts skills, and this source only carries config files (${detections
+              .flatMap((d) => d.matchedPaths.slice(0, 2))
+              .join(', ')}).`,
+          );
+        }
         throw new Error(
           `Multiple formats detected (${detections.map((d) => d.format).join(', ')}). Specify one with --from <format>.`,
         );

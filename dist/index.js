@@ -4698,20 +4698,25 @@ function detectFormats(files, options2) {
       strictResults.push(detected);
     }
   }
+  if (!strictResults.some((r) => r.skillCount > 0)) {
+    const looseResults = [];
+    for (const candidate of [claudeAdapter, cursorAdapter]) {
+      const detected = candidate.detect(files, { ...options2, allowLoose: true });
+      if (detected) {
+        looseResults.push(detected);
+      }
+    }
+    if (looseResults.length > 0) {
+      return looseResults;
+    }
+  }
   if (strictResults.length > 0) {
     const winners = strictResults.filter(
       (r) => !SHARED_ROOT_RULE_FORMATS.has(r.format) || !isRootRuleOnly(r)
     );
     return winners.length > 0 ? winners : strictResults;
   }
-  const looseResults = [];
-  for (const candidate of [claudeAdapter, cursorAdapter]) {
-    const detected = candidate.detect(files, { ...options2, allowLoose: true });
-    if (detected) {
-      looseResults.push(detected);
-    }
-  }
-  return looseResults;
+  return [];
 }
 
 // src/core/detector.ts
@@ -6097,6 +6102,46 @@ function entryKeepsConfigAssets(entry) {
     return withoutConfigDir !== "" && isConfigAssetPath(withoutConfigDir);
   });
 }
+function groupSkills(files) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const file of files) {
+    const rel = normalizePosixPath(file.path);
+    if (!rel.endsWith("/SKILL.md")) continue;
+    const dir = rel.slice(0, -"/SKILL.md".length);
+    const name = dir.split("/").pop();
+    if (name && !groups.has(`${dir}/`)) {
+      groups.set(`${dir}/`, { name, dir: `${dir}/`, drifted: false });
+    }
+  }
+  for (const file of files) {
+    if (file.status !== "modified") continue;
+    const rel = normalizePosixPath(file.path);
+    for (const group of groups.values()) {
+      if (rel.startsWith(group.dir)) {
+        group.drifted = true;
+        break;
+      }
+    }
+  }
+  return [...groups.values()];
+}
+function resolveSkillDirs(files, wanted) {
+  const byName = /* @__PURE__ */ new Map();
+  for (const group of groupSkills(files)) {
+    byName.set(group.name.toLowerCase(), group.dir);
+  }
+  const dirs = [];
+  const missing = [];
+  for (const name of wanted) {
+    const dir = byName.get(name.toLowerCase());
+    if (dir) {
+      dirs.push(dir);
+    } else {
+      missing.push(name);
+    }
+  }
+  return { dirs, missing };
+}
 function planSyncForEntry(entry, emittedFiles, diskHashes, installDir) {
   const resolvedRoot = path17.resolve(installDir);
   const recordedByPath = /* @__PURE__ */ new Map();
@@ -6280,6 +6325,7 @@ function planRemove(manifest, selector, projectDir) {
   const deletedPaths = [];
   const refusedPaths = [];
   const alreadyMissingPaths = [];
+  const missingSkills = [];
   const privateTargets = [];
   const nextInstalls = [];
   for (const entry of manifest.installs) {
@@ -6287,10 +6333,23 @@ function planRemove(manifest, selector, projectDir) {
       nextInstalls.push(entry);
       continue;
     }
+    const scoped = selector.skills ? resolveSkillDirs(entry.files, selector.skills) : void 0;
+    if (scoped) {
+      for (const name of scoped.missing) {
+        if (!missingSkills.includes(name)) {
+          missingSkills.push(name);
+        }
+      }
+    }
+    const scopedDirs = scoped ? scoped.dirs : null;
     const installDir = getInstallDir(entry, projectDir);
     const remainingFiles = [];
     for (const file of entry.files) {
       const rel = normalizePosixPath(file.path);
+      if (scopedDirs && !scopedDirs.some((dir) => rel.startsWith(dir))) {
+        remainingFiles.push(file);
+        continue;
+      }
       const abs = resolveWithin(installDir, rel);
       const diskHash = hashFile(abs);
       const display = entry.global ? abs : rel;
@@ -6316,6 +6375,7 @@ function planRemove(manifest, selector, projectDir) {
     deletedPaths,
     refusedPaths,
     alreadyMissingPaths,
+    missingSkills,
     nextManifest: {
       version: 1,
       installs: nextInstalls
@@ -6923,7 +6983,7 @@ var cac = (name = "") => new CAC(name);
 // package.json
 var package_default = {
   name: "everyagent",
-  version: "1.3.0",
+  version: "1.4.0",
   description: "Convert and install AI-agent skills between Cursor, Claude Code, OpenCode, Codex CLI, Antigravity, Windsurf, GitHub Copilot, Cline, and Roo Code",
   author: "liferes",
   repository: {
@@ -7101,12 +7161,19 @@ function parseSubcommand(subcmd, argv) {
     };
   }
   if (subcmd === "remove") {
-    cli.command("[source] [dest]", "Remove untouched files installed from a source").option("--all", "Remove all tracked installs in the manifest").option("-p, --path <dir>", "Project directory", { default: "." }).option("-g, --global", "Remove from global manifest (~/.everyagent/manifest.json)").option("-d, --dry-run", "Preview removals without touching disk");
+    cli.command("[source] [dest]", "Remove untouched files installed from a source").option("--all", "Remove all tracked installs in the manifest").option(
+      "-s, --skill <names>",
+      "Only remove specific skill(s), comma-separated"
+    ).option("-p, --path <dir>", "Project directory", { default: "." }).option("-g, --global", "Remove from global manifest (~/.everyagent/manifest.json)").option("-d, --dry-run", "Preview removals without touching disk");
     cli.help();
     const parsed2 = cli.parse(subArgv, { run: false });
     const opts2 = parsed2.options;
     if (opts2.help || opts2.version) return { kind: "help_or_version" };
     const all = Boolean(opts2.all);
+    const skills = opts2.skill !== void 0 ? parseSkillSelection(opts2.skill) : void 0;
+    if (all && skills) {
+      throw new CliUsageError("Use either --all or --skill, not both.");
+    }
     const source = all ? void 0 : parsed2.args[0];
     const destArg = all ? parsed2.args[0] : parsed2.args[1];
     if (!all && !source) {
@@ -7120,6 +7187,7 @@ function parseSubcommand(subcmd, argv) {
     return {
       kind: "remove",
       ...source ? { source } : {},
+      ...skills ? { skills } : {},
       all,
       targetDir: resolveExplicitPath(subArgv, opts2, destArg),
       global: Boolean(opts2.global),
@@ -7169,7 +7237,7 @@ function parseCliArgs(argv) {
   ).option("-g, --global", "Install to user global agent config directory").option("-y, --yes", "Skip confirmation prompt").option("-d, --dry-run", "Preview planned actions without writing files").option("--force", "Overwrite existing files instead of skipping").option(
     "--with-config",
     "Also copy settings, hooks, and MCP files (often hold secrets)"
-  ).example("everyagent").example("everyagent owner/repo -t claude").example("everyagent owner/repo -t claude -s react-hooks,api-design").example("everyagent https://github.com/u/r -t opencode ./app -y").example("everyagent sync").example("everyagent list").example("everyagent remove owner/repo");
+  ).example("everyagent").example("everyagent owner/repo -t claude").example("everyagent owner/repo -t claude -s react-hooks,api-design").example("everyagent https://github.com/u/r -t opencode ./app -y").example("everyagent sync").example("everyagent list").example("everyagent remove owner/repo").example("everyagent remove owner/repo -s react-hooks,api-design");
   cli.help();
   cli.version(package_default.version);
   const parsed = cli.parse(argv, { run: false });
@@ -8963,6 +9031,22 @@ async function handleSync(parsed) {
     process.exit(1);
   }
 }
+function wrapNames(names, width) {
+  const lines = [];
+  let current = "";
+  for (const name of names) {
+    if (current && current.length + 2 + name.length > width) {
+      lines.push(current);
+      current = name;
+    } else {
+      current = current ? `${current}  ${name}` : name;
+    }
+  }
+  if (current) {
+    lines.push(current);
+  }
+  return lines;
+}
 async function handleList(parsed) {
   const projectDir = path18.resolve(parsed.targetDir);
   const { manifest } = requireManifest(projectDir, parsed.global);
@@ -9010,7 +9094,8 @@ async function handleList(parsed) {
         missingCount: drift.missingCount,
         sourceDrifted,
         status,
-        files: drift.files
+        files: drift.files,
+        skills: groupSkills(drift.files)
       };
     })
   );
@@ -9029,11 +9114,20 @@ async function handleList(parsed) {
     if (item.missingCount > 0) driftParts.push(`${item.missingCount} missing`);
     if (item.sourceDrifted) driftParts.push("source moved on");
     const driftText = driftParts.length > 0 ? import_picocolors6.default.yellow(` (${driftParts.join(", ")})`) : import_picocolors6.default.green(" (clean)");
+    const countLabel = item.skills.length > 0 ? `${plural(item.skills.length, "skill")}, ${plural(item.fileCount, "file")}` : plural(item.fileCount, "file");
     console.log(
-      `${import_picocolors6.default.cyan("\u2022")} ${import_picocolors6.default.bold(srcLabel)} \u2192 ${FORMAT_META[item.targetFormat].label} \xB7 ${item.fileCount} file${item.fileCount === 1 ? "" : "s"}${driftText}`
+      `${import_picocolors6.default.cyan("\u2022")} ${import_picocolors6.default.bold(srcLabel)} \u2192 ${FORMAT_META[item.targetFormat].label} \xB7 ${countLabel}${driftText}`
     );
     if (item.global) {
       console.log(`  ${import_picocolors6.default.dim(item.installDir)}`);
+    }
+    if (item.skills.length > 0) {
+      const names = item.skills.map(
+        (skill) => skill.drifted ? `${skill.name}*` : skill.name
+      );
+      for (const line of wrapNames(names, 74)) {
+        console.log(`    ${line}`);
+      }
     }
   }
 }
@@ -9042,7 +9136,11 @@ async function handleRemove(parsed) {
   const { manifestPath, manifest } = requireManifest(projectDir, parsed.global);
   const plan = planRemove(
     manifest,
-    { source: parsed.source, all: parsed.all },
+    {
+      source: parsed.source,
+      all: parsed.all,
+      ...parsed.skills ? { skills: parsed.skills } : {}
+    },
     projectDir
   );
   if (plan.matchedEntries.length === 0) {
@@ -9050,6 +9148,16 @@ async function handleRemove(parsed) {
     logError(
       `No matching install for "${parsed.source ?? "--all"}" in manifest.${available.length > 0 ? ` Installed sources: ${available.join(", ")}` : ""}`
     );
+    process.exit(1);
+  }
+  if (plan.missingSkills.length > 0) {
+    logError(`Not installed: ${plan.missingSkills.join(", ")}.`);
+    const available = [
+      ...new Set(plan.matchedEntries.flatMap((e2) => groupSkills(e2.files).map((s) => s.name)))
+    ];
+    if (available.length > 0) {
+      logInfo(`Installed skills: ${available.join(", ")}.`);
+    }
     process.exit(1);
   }
   applyRemovePlan(plan, { dryRun: parsed.dryRun });
@@ -9064,14 +9172,12 @@ async function handleRemove(parsed) {
     console.log(`${prefix}${import_picocolors6.default.dim(`= Already missing ${rel}`)}`);
   }
   if (plan.refusedPaths.length > 0) {
-    console.log("");
     logWarn(
-      `Refused to delete ${plan.refusedPaths.length} locally edited file${plan.refusedPaths.length === 1 ? "" : "s"} (content differs from manifest):`
+      `Kept ${plan.refusedPaths.length} locally edited file${plan.refusedPaths.length === 1 ? "" : "s"} (content differs from manifest):`
     );
     for (const rel of plan.refusedPaths) {
       console.log(`  ${rel}`);
     }
-    process.exit(1);
   }
   logSuccess(
     `${parsed.dryRun ? "Would remove" : "Removed"} ${plan.deletedPaths.length} file${plan.deletedPaths.length === 1 ? "" : "s"}.`
@@ -9158,6 +9264,11 @@ async function main() {
     if (!process.stdin.isTTY) {
       const allSharedRoots = detections.every(isWeakRootRuleOnly);
       if (!allSharedRoots) {
+        if (detections.every((d3) => d3.skillCount === 0)) {
+          throw new Error(
+            `No SKILL.md found in ${fetchResult.source.displayLabel}. everyagent converts skills, and this source only carries config files (${detections.flatMap((d3) => d3.matchedPaths.slice(0, 2)).join(", ")}).`
+          );
+        }
         throw new Error(
           `Multiple formats detected (${detections.map((d3) => d3.format).join(", ")}). Specify one with --from <format>.`
         );

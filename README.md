@@ -75,6 +75,7 @@ everyagent sync
 everyagent sync --check
 everyagent list
 everyagent remove owner/repo
+everyagent remove owner/repo -s brainstorming
 everyagent lint
 ```
 
@@ -157,12 +158,17 @@ Every install records a manifest at `.everyagent/manifest.json` (or `~/.everyage
 ```bash
 everyagent sync [dest]          # update untouched files, keep local edits, prune removed upstream files
 everyagent sync --check         # exit 1 if anything drifted (for CI)
-everyagent list [dest]          # show installed sources, formats, and local drift
-everyagent remove <source|--all> [dest]  # delete untouched files; refuse edited ones
+everyagent list [dest]          # show installed sources, formats, skills, and local drift
+everyagent remove <source|--all> [dest]  # delete untouched files, keep edited ones
+everyagent remove <source> -s <names> [dest]  # drop named skills, keep the rest of the install
 everyagent lint [source]        # check frontmatter, duplicates, naming, description length, links
 ```
 
-`sync`, `list`, and `lint` accept `--json`. Exit codes: `0` clean, `1` on drift (`--check`), refusal, or lint errors, `2` on bad arguments.
+`remove -s` deletes the folders you name and leaves everything else tracked, so the rest of the install keeps working. Root rules and shared config stay, because dropping those would break skills you asked to keep. An edited file is kept and reported instead of deleted, and that is not an error: the exit code stays `0`. A name that is not installed exits `1` and lists what is there, so a typo removes nothing.
+
+`list` prints the skill names under each install, with a `*` on any skill you have edited, which is exactly the set `remove -s` would refuse to delete.
+
+`sync`, `list`, and `lint` accept `--json`. Exit codes: `0` clean, `1` on drift (`--check`), an unknown skill name, or lint errors, `2` on bad arguments.
 
 One case is worth knowing about. OpenCode and Codex both call their root rule `AGENTS.md`, but each rewrites internal paths for its own config directory, so the two copies differ. Convert to both in a single run and the second one loses:
 
