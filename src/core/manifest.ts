@@ -194,11 +194,22 @@ export function writeManifest(
   };
 
   fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
-  fs.writeFileSync(
-    manifestPath,
-    `${JSON.stringify(sortJsonKeys(normalized), null, 2)}\n`,
-    'utf8',
-  );
+  const tmpPath = `${manifestPath}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  try {
+    fs.writeFileSync(
+      tmpPath,
+      `${JSON.stringify(sortJsonKeys(normalized), null, 2)}\n`,
+      'utf8',
+    );
+    fs.renameSync(tmpPath, manifestPath);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      // ignore cleanup error
+    }
+    throw err;
+  }
 }
 
 export function formatSourceForManifest(
@@ -411,7 +422,23 @@ export function recordManifestEntries(options: {
     targetDir: options.targetDir,
     global: options.global,
   });
-  let manifest = readManifest(manifestPath) ?? createEmptyManifest();
+  let manifest: EveryagentManifest;
+  try {
+    manifest = readManifest(manifestPath) ?? createEmptyManifest();
+  } catch (err) {
+    const backupPath = `${manifestPath}.corrupt`;
+    try {
+      if (fs.existsSync(manifestPath)) {
+        fs.renameSync(manifestPath, backupPath);
+      }
+    } catch {
+      // best effort backup
+    }
+    process.stderr.write(
+      `Warning: ${err instanceof Error ? err.message : String(err)} Rebuilding manifest (backed up to ${backupPath}).\n`,
+    );
+    manifest = createEmptyManifest();
+  }
   const formattedSource = formatSourceForManifest(
     options.parsedSource,
     options.targetDir,

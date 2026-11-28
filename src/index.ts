@@ -105,7 +105,15 @@ function requireManifest(
   global: boolean,
 ): { manifestPath: string; manifest: EveryagentManifest } {
   const manifestPath = getManifestPath({ targetDir, global });
-  const manifest = readManifest(manifestPath);
+  let manifest: EveryagentManifest | null;
+  try {
+    manifest = readManifest(manifestPath);
+  } catch (err) {
+    logError(
+      `${err instanceof Error ? err.message : String(err)} Reinstall once with \`everyagent <source>\` to rebuild it.`,
+    );
+    process.exit(1);
+  }
   if (!manifest) {
     logError(
       `No manifest found at ${manifestPath}. Reinstall your skills once with \`everyagent <source>\` to create one.`,
@@ -763,7 +771,7 @@ async function main(): Promise<void> {
     let actionChoice: WriteActionChoice = 'cancel';
 
     while (true) {
-      const { summary: preview } = convertAndWrite({
+      const { summary: preview, plannedTargets: previewTargets } = convertAndWrite({
         files: fetchResult.files,
         pkg: filteredPkg,
         sourceFormat: chosenDetection.format,
@@ -782,6 +790,15 @@ async function main(): Promise<void> {
         preview.conflict === 0 &&
         preview.unchanged > 0
       ) {
+        recordManifestEntries({
+          targetDir: parsed.targetDir,
+          global: parsed.global,
+          parsedSource: fetchResult.source,
+          sourceFormat: chosenDetection.format,
+          selection,
+          plannedTargets: previewTargets,
+          summary: preview,
+        });
         logInfo(`Already up to date! ${formatSummaryCounts(preview)}.`);
         return;
       }

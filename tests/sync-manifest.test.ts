@@ -605,4 +605,55 @@ describe('config assets survive an upgrade from a pre-1.2.0 manifest', () => {
     );
     expect(plan.actions.some((a) => a.kind === 'delete')).toBe(false);
   });
+
+  it('writes manifest atomically and recovers when an existing manifest is truncated', () => {
+    const proj = makeTempDir('corrupt-manifest-');
+    const manifestPath = getManifestPath({ targetDir: proj, global: false });
+    fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+    fs.writeFileSync(manifestPath, '{"version": 1, "installs": [', 'utf8');
+
+    const skillPath = path.join(proj, '.codex/skills/hello/SKILL.md');
+    fs.mkdirSync(path.dirname(skillPath), { recursive: true });
+    const content = Buffer.from('---\nname: hello\ndescription: hi\n---\n\nbody\n', 'utf8');
+    fs.writeFileSync(skillPath, content);
+
+    const warnSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    recordManifestEntries({
+      targetDir: proj,
+      global: false,
+      parsedSource: { type: 'local', localPath: path.join(proj, 'src'), displayLabel: 'src' },
+      sourceFormat: 'codex',
+      plannedTargets: [
+        {
+          targetFormat: 'codex',
+          destination: proj,
+          files: [{ targetFormat: 'codex', relativePath: '.codex/skills/hello/SKILL.md', content }],
+        },
+      ],
+      summary: {
+        created: 1,
+        overwritten: 0,
+        unchanged: 0,
+        skipped: 0,
+        duplicate: 0,
+        conflict: 0,
+        actions: [
+          {
+            relativePath: '.codex/skills/hello/SKILL.md',
+            absolutePath: skillPath,
+            status: 'created',
+            targetFormat: 'codex',
+            dryRun: false,
+          },
+        ],
+      },
+    });
+
+    expect(warnSpy).toHaveBeenCalled();
+    expect(fs.existsSync(`${manifestPath}.corrupt`)).toBe(true);
+    expect(fs.readdirSync(path.dirname(manifestPath)).some((f) => f.endsWith('.tmp'))).toBe(false);
+    const recovered = readManifest(manifestPath)!;
+    expect(recovered.installs).toHaveLength(1);
+    expect(recovered.installs[0].files[0].path).toBe('.codex/skills/hello/SKILL.md');
+  });
 });

@@ -8,6 +8,7 @@ import type { SourceFile } from '../src/core/ir.js';
 import {
   createEmptyManifest,
   hashBuffer,
+  hashFile,
   type EveryagentManifest,
 } from '../src/core/manifest.js';
 import { groupSkills, planRemove } from '../src/core/sync.js';
@@ -214,5 +215,50 @@ describe('groupSkills describes what list shows', () => {
 
   it('returns nothing for a config-only install', () => {
     expect(groupSkills([{ path: '.claude/commands/review.md' }])).toEqual([]);
+  });
+
+  it('groups Cursor .mdc rule skills and scoped remove removes only the named skill', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ea-cursor-rm-'));
+    try {
+      const demoFile = path.join(root, '.cursor/rules/demo.mdc');
+      const otherFile = path.join(root, '.cursor/rules/other.mdc');
+      fs.mkdirSync(path.dirname(demoFile), { recursive: true });
+      fs.writeFileSync(demoFile, 'demo rule\n');
+      fs.writeFileSync(otherFile, 'other rule\n');
+
+      const files = [
+        { path: '.cursor/rules/demo.mdc', sha256: hashFile(demoFile)! },
+        { path: '.cursor/rules/other.mdc', sha256: hashFile(otherFile)! },
+      ];
+      expect(groupSkills(files).map((g) => g.name)).toEqual(['demo', 'other']);
+
+      const plan = planRemove(
+        {
+          version: 1,
+          installs: [
+            {
+              source: 'cursor/pkg',
+              ref: null,
+              subpath: null,
+              sourceFormat: 'cursor',
+              targetFormat: 'cursor',
+              global: false,
+              targetDir: null,
+              installedAt: '2026-11-28T00:00:00.000Z',
+              files,
+            },
+          ],
+        },
+        { source: 'cursor/pkg', skills: ['demo'] },
+        root,
+      );
+      expect(plan.missingSkills).toEqual([]);
+      expect(plan.deletedPaths).toEqual(['.cursor/rules/demo.mdc']);
+      expect(plan.nextManifest.installs[0].files.map((f) => f.path)).toEqual([
+        '.cursor/rules/other.mdc',
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

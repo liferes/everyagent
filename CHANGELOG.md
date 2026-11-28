@@ -4,6 +4,16 @@ Versioning: `x` big update, `y` mid fix, `z` small change.
 
 Releases before 1.1.0 shipped as `uniskill`. The entries below are left as they were written.
 
+## 1.5.0 (2026-11-29)
+
+Manifest safety and Cursor skill removal fixes:
+
+- Interactive runs where all emitted files already match on disk now still write `.everyagent/manifest.json` instead of returning early before recording, so `list`, `sync`, and `remove` work afterwards.
+- `writeManifest` now writes through a unique temp file and atomic rename, and `recordManifestEntries` backs up corrupt/truncated manifests to `.corrupt` and rebuilds instead of failing after writing skill files.
+- `groupSkills()` and `remove --skill` now recognise Cursor rules under `.cursor/rules/<name>.mdc` and global `rules/<name>.mdc`.
+
+Tests: 175.
+
 ## 1.4.1 (2026-11-26)
 
 The published package installs nothing but itself.

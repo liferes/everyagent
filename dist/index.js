@@ -5481,12 +5481,22 @@ function writeManifest(manifestPath, manifest) {
     installs
   };
   fs3.mkdirSync(path15.dirname(manifestPath), { recursive: true });
-  fs3.writeFileSync(
-    manifestPath,
-    `${JSON.stringify(sortJsonKeys(normalized), null, 2)}
+  const tmpPath = `${manifestPath}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`;
+  try {
+    fs3.writeFileSync(
+      tmpPath,
+      `${JSON.stringify(sortJsonKeys(normalized), null, 2)}
 `,
-    "utf8"
-  );
+      "utf8"
+    );
+    fs3.renameSync(tmpPath, manifestPath);
+  } catch (err) {
+    try {
+      fs3.unlinkSync(tmpPath);
+    } catch {
+    }
+    throw err;
+  }
 }
 function formatSourceForManifest(parsedSource, targetDir, global) {
   if (parsedSource.type === "github") {
@@ -5626,7 +5636,23 @@ function recordManifestEntries(options2) {
     targetDir: options2.targetDir,
     global: options2.global
   });
-  let manifest = readManifest(manifestPath) ?? createEmptyManifest();
+  let manifest;
+  try {
+    manifest = readManifest(manifestPath) ?? createEmptyManifest();
+  } catch (err) {
+    const backupPath = `${manifestPath}.corrupt`;
+    try {
+      if (fs3.existsSync(manifestPath)) {
+        fs3.renameSync(manifestPath, backupPath);
+      }
+    } catch {
+    }
+    process.stderr.write(
+      `Warning: ${err instanceof Error ? err.message : String(err)} Rebuilding manifest (backed up to ${backupPath}).
+`
+    );
+    manifest = createEmptyManifest();
+  }
   const formattedSource = formatSourceForManifest(
     options2.parsedSource,
     options2.targetDir,
@@ -6102,22 +6128,36 @@ function entryKeepsConfigAssets(entry) {
     return withoutConfigDir !== "" && isConfigAssetPath(withoutConfigDir);
   });
 }
+function matchesSkillGroup(rel, group) {
+  return rel.startsWith(group.dir) || group.file !== void 0 && rel === group.file;
+}
 function groupSkills(files) {
   const groups = /* @__PURE__ */ new Map();
   for (const file of files) {
     const rel = normalizePosixPath(file.path);
-    if (!rel.endsWith("/SKILL.md")) continue;
-    const dir = rel.slice(0, -"/SKILL.md".length);
-    const name = dir.split("/").pop();
-    if (name && !groups.has(`${dir}/`)) {
-      groups.set(`${dir}/`, { name, dir: `${dir}/`, drifted: false });
+    if (rel.endsWith("/SKILL.md")) {
+      const dir = rel.slice(0, -"/SKILL.md".length);
+      const name = dir.split("/").pop();
+      if (name && !groups.has(`${dir}/`)) {
+        groups.set(`${dir}/`, { name, dir: `${dir}/`, drifted: false });
+      }
+      continue;
+    }
+    const mdcMatch = /^(?:\.cursor\/)?rules\/([^/]+)\.mdc$/.exec(rel);
+    if (mdcMatch) {
+      const name = mdcMatch[1];
+      const prefix = rel.startsWith(".cursor/") ? ".cursor/rules/" : "rules/";
+      const dir = `${prefix}${name}/`;
+      if (!groups.has(dir)) {
+        groups.set(dir, { name, dir, file: rel, drifted: false });
+      }
     }
   }
   for (const file of files) {
     if (file.status !== "modified") continue;
     const rel = normalizePosixPath(file.path);
     for (const group of groups.values()) {
-      if (rel.startsWith(group.dir)) {
+      if (matchesSkillGroup(rel, group)) {
         group.drifted = true;
         break;
       }
@@ -6125,22 +6165,22 @@ function groupSkills(files) {
   }
   return [...groups.values()];
 }
-function resolveSkillDirs(files, wanted) {
+function resolveSkillGroups(files, wanted) {
   const byName = /* @__PURE__ */ new Map();
   for (const group of groupSkills(files)) {
-    byName.set(group.name.toLowerCase(), group.dir);
+    byName.set(group.name.toLowerCase(), group);
   }
-  const dirs = [];
+  const groups = [];
   const missing = [];
   for (const name of wanted) {
-    const dir = byName.get(name.toLowerCase());
-    if (dir) {
-      dirs.push(dir);
+    const group = byName.get(name.toLowerCase());
+    if (group) {
+      groups.push(group);
     } else {
       missing.push(name);
     }
   }
-  return { dirs, missing };
+  return { groups, missing };
 }
 function planSyncForEntry(entry, emittedFiles, diskHashes, installDir) {
   const resolvedRoot = path17.resolve(installDir);
@@ -6333,7 +6373,7 @@ function planRemove(manifest, selector, projectDir) {
       nextInstalls.push(entry);
       continue;
     }
-    const scoped = selector.skills ? resolveSkillDirs(entry.files, selector.skills) : void 0;
+    const scoped = selector.skills ? resolveSkillGroups(entry.files, selector.skills) : void 0;
     if (scoped) {
       for (const name of scoped.missing) {
         if (!missingSkills.includes(name)) {
@@ -6341,12 +6381,12 @@ function planRemove(manifest, selector, projectDir) {
         }
       }
     }
-    const scopedDirs = scoped ? scoped.dirs : null;
+    const scopedGroups = scoped ? scoped.groups : null;
     const installDir = getInstallDir(entry, projectDir);
     const remainingFiles = [];
     for (const file of entry.files) {
       const rel = normalizePosixPath(file.path);
-      if (scopedDirs && !scopedDirs.some((dir) => rel.startsWith(dir))) {
+      if (scopedGroups && !scopedGroups.some((g2) => matchesSkillGroup(rel, g2))) {
         remainingFiles.push(file);
         continue;
       }
@@ -6983,7 +7023,7 @@ var cac = (name = "") => new CAC(name);
 // package.json
 var package_default = {
   name: "everyagent",
-  version: "1.4.1",
+  version: "1.5.0",
   description: "Convert and install AI-agent skills between Cursor, Claude Code, OpenCode, Codex CLI, Antigravity, Windsurf, GitHub Copilot, Cline, and Roo Code",
   author: "liferes",
   repository: {
@@ -8847,7 +8887,15 @@ function emitForSyncEntry(pkg, entry) {
 }
 function requireManifest(targetDir, global) {
   const manifestPath = getManifestPath({ targetDir, global });
-  const manifest = readManifest(manifestPath);
+  let manifest;
+  try {
+    manifest = readManifest(manifestPath);
+  } catch (err) {
+    logError(
+      `${err instanceof Error ? err.message : String(err)} Reinstall once with \`everyagent <source>\` to rebuild it.`
+    );
+    process.exit(1);
+  }
   if (!manifest) {
     logError(
       `No manifest found at ${manifestPath}. Reinstall your skills once with \`everyagent <source>\` to create one.`
@@ -9354,7 +9402,7 @@ async function main() {
     let alreadyPreviewed = false;
     let actionChoice = "cancel";
     while (true) {
-      const { summary: preview } = convertAndWrite({
+      const { summary: preview, plannedTargets: previewTargets } = convertAndWrite({
         files: fetchResult.files,
         pkg: filteredPkg,
         sourceFormat: chosenDetection.format,
@@ -9367,6 +9415,15 @@ async function main() {
         allowLoose: chosenDetection.allowLoose
       });
       if (preview.created === 0 && preview.skipped === 0 && preview.conflict === 0 && preview.unchanged > 0) {
+        recordManifestEntries({
+          targetDir: parsed.targetDir,
+          global: parsed.global,
+          parsedSource: fetchResult.source,
+          sourceFormat: chosenDetection.format,
+          selection,
+          plannedTargets: previewTargets,
+          summary: preview
+        });
         logInfo(`Already up to date! ${formatSummaryCounts(preview)}.`);
         return;
       }

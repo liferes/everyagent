@@ -77,8 +77,14 @@ export interface SkillGroup {
   name: string;
   /** Folder path with a trailing slash, relative to the install dir. */
   dir: string;
+  /** Optional single-file skill path (for Cursor `.mdc` rules). */
+  file?: string;
   /** True when a file in this skill was edited, which `remove` keeps. */
   drifted: boolean;
+}
+
+export function matchesSkillGroup(rel: string, group: SkillGroup): boolean {
+  return rel.startsWith(group.dir) || (group.file !== undefined && rel === group.file);
 }
 
 export function groupSkills(
@@ -87,11 +93,22 @@ export function groupSkills(
   const groups = new Map<string, SkillGroup>();
   for (const file of files) {
     const rel = normalizePosixPath(file.path);
-    if (!rel.endsWith('/SKILL.md')) continue;
-    const dir = rel.slice(0, -'/SKILL.md'.length);
-    const name = dir.split('/').pop();
-    if (name && !groups.has(`${dir}/`)) {
-      groups.set(`${dir}/`, { name, dir: `${dir}/`, drifted: false });
+    if (rel.endsWith('/SKILL.md')) {
+      const dir = rel.slice(0, -'/SKILL.md'.length);
+      const name = dir.split('/').pop();
+      if (name && !groups.has(`${dir}/`)) {
+        groups.set(`${dir}/`, { name, dir: `${dir}/`, drifted: false });
+      }
+      continue;
+    }
+    const mdcMatch = /^(?:\.cursor\/)?rules\/([^/]+)\.mdc$/.exec(rel);
+    if (mdcMatch) {
+      const name = mdcMatch[1];
+      const prefix = rel.startsWith('.cursor/') ? '.cursor/rules/' : 'rules/';
+      const dir = `${prefix}${name}/`;
+      if (!groups.has(dir)) {
+        groups.set(dir, { name, dir, file: rel, drifted: false });
+      }
     }
   }
   for (const file of files) {
@@ -100,7 +117,7 @@ export function groupSkills(
     if (file.status !== 'modified') continue;
     const rel = normalizePosixPath(file.path);
     for (const group of groups.values()) {
-      if (rel.startsWith(group.dir)) {
+      if (matchesSkillGroup(rel, group)) {
         group.drifted = true;
         break;
       }
@@ -109,27 +126,27 @@ export function groupSkills(
   return [...groups.values()];
 }
 
-/** Skill folders to touch, plus the requested names that matched nothing. */
-function resolveSkillDirs(
+/** Skill groups to touch, plus the requested names that matched nothing. */
+function resolveSkillGroups(
   files: ManifestFileEntry[],
   wanted: string[],
-): { dirs: string[]; missing: string[] } {
-  const byName = new Map<string, string>();
+): { groups: SkillGroup[]; missing: string[] } {
+  const byName = new Map<string, SkillGroup>();
   for (const group of groupSkills(files)) {
-    byName.set(group.name.toLowerCase(), group.dir);
+    byName.set(group.name.toLowerCase(), group);
   }
 
-  const dirs: string[] = [];
+  const groups: SkillGroup[] = [];
   const missing: string[] = [];
   for (const name of wanted) {
-    const dir = byName.get(name.toLowerCase());
-    if (dir) {
-      dirs.push(dir);
+    const group = byName.get(name.toLowerCase());
+    if (group) {
+      groups.push(group);
     } else {
       missing.push(name);
     }
   }
-  return { dirs, missing };
+  return { groups, missing };
 }
 
 /** Pure sync planner comparing manifest records, freshly emitted files, and disk hashes. */
@@ -365,7 +382,7 @@ export function planRemove(
     // tracked, including root rules and shared config, because dropping those
     // would silently break the rest of the install.
     const scoped = selector.skills
-      ? resolveSkillDirs(entry.files, selector.skills)
+      ? resolveSkillGroups(entry.files, selector.skills)
       : undefined;
     if (scoped) {
       for (const name of scoped.missing) {
@@ -376,14 +393,14 @@ export function planRemove(
     }
     // An empty match list still counts as scoping: a typo must remove nothing,
     // never fall through to the whole install.
-    const scopedDirs = scoped ? scoped.dirs : null;
+    const scopedGroups = scoped ? scoped.groups : null;
 
     const installDir = getInstallDir(entry, projectDir);
     const remainingFiles: ManifestFileEntry[] = [];
 
     for (const file of entry.files) {
       const rel = normalizePosixPath(file.path);
-      if (scopedDirs && !scopedDirs.some((dir) => rel.startsWith(dir))) {
+      if (scopedGroups && !scopedGroups.some((g) => matchesSkillGroup(rel, g))) {
         remainingFiles.push(file);
         continue;
       }
